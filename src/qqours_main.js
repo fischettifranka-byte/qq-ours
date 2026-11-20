@@ -195,6 +195,12 @@ function fetchProfile(uid, timeoutMs) {
   });
 }
 let queryRunning = false;
+async function qunPskey() {
+  const r = await session.getTipOffService().getPskey(["qun.qq.com"], true);
+  const m = r && r.domainPskeyMap;
+  if (m instanceof Map) return m.get("qun.qq.com");
+  return m && m["qun.qq.com"];
+}
 function startQueryQueue() {
   if (queryRunning) return;
   queryRunning = true;
@@ -276,6 +282,22 @@ function startQueryQueue() {
           } else if (job.q === "group_notify_count") {
             const r = await groupService.getGroupNotifiesUnreadCount(false);
             qlog({ q: "group_notify_count", time: Date.now(), res: r });
+          } else if (job.q === "bulletin_publish") {
+            const pk = await qunPskey();
+            const r = await groupService.publishGroupBulletin(String(job.group), pk, { text: encodeURI(job.text || ""), oldFeedsId: "", pinned: 0, confirmRequired: 0 });
+            qlog({ q: "bulletin_publish", time: Date.now(), group: String(job.group), res: r });
+          } else if (job.q === "essence_list") {
+            const pk = await qunPskey();
+            const r = await groupService.fetchGroupEssenceList({ groupCode: String(job.group), pageStart: 0, pageLimit: 50 }, pk);
+            qlog({ q: "essence_list", time: Date.now(), group: String(job.group), raw: JSON.parse(JSON.stringify(r || {})).toString().slice(0, 200) , keys: r ? Object.keys(r) : [] });
+          } else if (job.q === "essence_add") {
+            const md = await msgService.getMsgsIncludeSelf({ chatType: 2, guildId: "", peerUid: String(job.group) }, String(job.msgId), 1, false);
+            const m0 = md && md.msgList && md.msgList[0];
+            if (!m0) { qlog({ q: "essence_add", error: "msg not found" }); }
+            else {
+              const r = await groupService.addGroupEssence({ groupCode: String(job.group), msgRandom: parseInt(m0.msgRandom), msgSeq: parseInt(m0.msgSeq) });
+              qlog({ q: "essence_add", time: Date.now(), group: String(job.group), msgId: String(job.msgId), res: r });
+            }
           } else if (job.q === "group_members") {
             const r = await groupService.getAllMemberList(String(job.groupCode), job.force === false ? false : true);
             const infos = (r && r.result && r.result.infos) || (r && r.infos);
