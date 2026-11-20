@@ -50,13 +50,32 @@ curl -s -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
 | `get_cookies` | qun.qq.com 的 p_skey |
 | `set_group_kick` / `set_group_ban` / `set_group_whole_ban` | 踢人 / 禁言 / 全员禁言 |
 | `set_group_card` / `set_group_admin` | 名片 / 管理员 |
-| `set_group_leave` | 退群 |
+| `set_group_leave` | 退群（`quitGroup`） |
+| `get_group_info` | 群资料（以群列表缓存为准，先调一次 `get_group_list`） |
+| `set_group_name` | 改群名（`modifyGroupName`，签名待实测确认） |
+| `delete_group_file` | 删群文件（`RichMediaService.deleteGroupFile`） |
+| `add_friend` | 加好友（`reqToAddFriends`，返回里带实际成功的方法名） |
+| `delete_friend` | 删好友（`delBuddy`） |
+| `set_friend_remark` | 改备注（`setBuddyRemark`，会清好友缓存） |
+| `set_friend_category` | 好友分组（`setBuddyCategory`） |
+| `mark_msg_as_read` | 标记已读（`setMsgRead`，单参数对象） |
+| `debug_probe` | 探针：列出任意内核服务的方法名，排障用 |
 | `set_friend_add_request` | 好友申请审批，flag 格式 `friendUid|reqTime` |
 | `set_group_add_request` | 入群审批，flag 格式 `seq|type|groupCode` |
 
 ## 未实现（调用会返回明确原因）
 
-`mark_msg_as_read`、`get_group_info`、`get_group_honor_info`、`set_group_name`、`send_like`、`get_recent_contact`。
+`upload_group_file`（`onlyUploadFile` / `uploadRMFileWithoutMsg` 已定位，签名与回调未验证）、
+`get_group_honor_info`、`send_like`（需 OIDB，与戳一戳同路）、`get_recent_contact`。
+
+## 运行时开关（`/data/qq-ours/config.json`，可选）
+
+```json
+{ "auto_download_image": true, "rate_limit_per_min": 30 }
+```
+
+- `auto_download_image`：收到图片自动 `downloadRichMedia`，落地到 `files/inbox/`（默认开）
+- `rate_limit_per_min`：HTTP 发送接口的每分钟上限，超了返回 1500 并说明（默认 30）
 
 ## 事件推送（WebSocket）
 

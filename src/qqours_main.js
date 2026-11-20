@@ -10,6 +10,16 @@ const LOGF = path.join(OUT, "boot.log");
 const DEV_NAME = process.env.QQ_DEV_NAME || "ubuntu-desktop";
 const FILES_BASE = path.join(OUT, "files");
 const DEAD_LETTER = path.join(OUT, "dead_letter.jsonl");
+// 运行时开关（config.json，可选）
+let RUNTIME = { auto_download_image: true, rate_limit_per_min: 30 };
+try { RUNTIME = Object.assign(RUNTIME, JSON.parse(fs.readFileSync(path.join(OUT, "config.json"), "utf8"))); } catch (e) {}
+function rateOk() {
+  const now = Date.now(), win = 60000;
+  while (rateBucket.length && now - rateBucket[0] > win) rateBucket.shift();
+  if (rateBucket.length >= (RUNTIME.rate_limit_per_min || 30)) return false;
+  rateBucket.push(now); return true;
+}
+const rateBucket = [];
 function log(...a) {
   const s = a.map(x => { try { return typeof x === "string" ? x : JSON.stringify(x); } catch (e) { return String(x); } }).join(" ");
   try { fs.appendFileSync(LOGF, "[" + new Date().toISOString() + "] " + s + "\n"); } catch (e) {}
@@ -201,6 +211,15 @@ function recordMsg(src, m) {
         raw_message: rec.text,
         message_format: "array"
       });
+      if (RUNTIME.auto_download_image) {
+        for (const el of (m.elements || [])) {
+          if (el.elementType !== 2) continue;
+          try {
+            msgService.downloadRichMedia({ fileModelId: "0", downSourceType: 0, downloadSourceType: 0, triggerType: 1, msgId: m.msgId, chatType: m.chatType, peerUid: m.peerUid, elementId: el.elementId, thumbSize: 0, downloadType: 1, filePath: "" });
+            log("自动下载图片", m.msgId, el.elementId);
+          } catch (e) { log("自动下载图片失败", e.message); }
+        }
+      }
     }
   } catch (e) { log("recordMsg err", e.message); }
 }
@@ -944,6 +963,7 @@ async function apiSend(chatType, peer, segs) {
     } else throw new Error("不支持的段类型: " + seg.type);
   }
   if (!elements.length) throw new Error("空消息");
+  if (!rateOk()) throw new Error("发送过于频繁，已限流（上限 " + (RUNTIME.rate_limit_per_min || 30) + " 条/分钟）");
   const peerObj = { chatType: ct, peerUid: peerUid, guildId: "" };
   const res = await msgService.sendMsg("0", peerObj, elements, new Map());
   let mid = res && (res.msgId || (res.result && res.result.msgId) || 0);
@@ -1018,10 +1038,15 @@ const apiCalls = {
     return arr.map(m => ({ group_id: Number(groupId), user_id: Number(m.uin) || 0, nickname: m.nick || "", card: m.cardName || "", role: Number(m.role) === 4 ? "owner" : Number(m.role) === 3 ? "admin" : "member", uid: m.uid }));
   },
   async groupMemberInfo(groupId, userId) {
-    const list = await apiCalls.groupMemberList(groupId);
-    const hit = list.find(m => String(m.user_id) === String(userId));
-    if (!hit) throw new Error("群成员不存在");
-    return hit;
+    const uid = (await apiCalls.groupMemberList(groupId)).find(m => String(m.user_id) === String(userId));
+    if (uid && uid.uid) {
+      try {
+        const r = await tryCall(groupService, ["getMemberInfo", "getMemberExtInfo"], [String(groupId), uid.uid]);
+        return Object.assign({}, uid, { raw: r });
+      } catch (e) {}
+    }
+    if (!uid) throw new Error("群成员不存在");
+    return uid;
   },
   async groupInfo(groupId) { throw new Error("尚未实现: get_group_info（内核 getGroupDetailInfo 未接）"); },
   async groupHonor() { throw new Error("尚未实现: 群荣誉"); },
@@ -1052,6 +1077,98 @@ const apiCalls = {
   async sendLike() { throw new Error("尚未实现: 名片赞（需 OIDB，同戳一戳待走 msso_send）"); },
   async recentContact() { throw new Error("尚未实现: 最近会话（RecentContactService 未接）"); }
 };
+
+// 内核方法名不确定时按候选顺序尝试
+async function tryCall(obj, names, args) {
+  const tried = [];
+  for (const n of names) {
+    if (typeof obj[n] !== "function") { tried.push(n + "(无)"); continue; }
+    try { return await obj[n].apply(obj, args); } catch (e) { tried.push(n + ":" + e.message); }
+  }
+  throw new Error("候选方法都失败: " + tried.join(" | "));
+}
+
+Object.assign(apiCalls, {
+  async debug_probe(params) {
+    const name = String(params.service || "GroupService");
+    const getter = "get" + name;
+    if (typeof session[getter] !== "function") throw new Error("没有 " + getter);
+    const svc = session[getter]();
+    const names = new Set();
+    let o = svc;
+    for (let d = 0; o && d < 3; d++) { Object.getOwnPropertyNames(o).forEach(n => names.add(n)); o = Object.getPrototypeOf(o); }
+    return { service: name, methods: [...names].filter(n => typeof svc[n] === "function").sort() };
+  },
+  async groupInfo(groupId) {
+    // 内核的 detail 接口只回 result，真正的数据走 listener/缓存；这里以群列表缓存为准
+    const cached = (lastGroupList || []).find(g => String(g.group_id) === String(groupId)) || {};
+    let raw = null;
+    try { raw = await tryCall(groupService, ["getGroupAllInfo", "getGroupDetailInfo"], [String(groupId), true]); } catch (e) {}
+    return Object.assign({ group_id: Number(groupId) }, cached, { raw: raw });
+  },
+  async groupRename(groupId, name) {
+    const r = await tryCall(groupService, ["modifyGroupName", "modifyGroupExtInfoV2", "modifyGroupExtInfo"], [String(groupId), String(name || "")]);
+    return { group_id: Number(groupId), raw: r };
+  },
+  async deleteGroupFile(groupId, fileId) {
+    const svc = session.getRichMediaService();
+    const r = await tryCall(svc, ["deleteGroupFile"], [String(groupId), String(fileId)]);
+    return { group_id: Number(groupId), file_id: String(fileId), raw: r };
+  },
+  async uploadGroupFile() { throw new Error("暂不可用: 群文件上传（RichMediaService.onlyUploadFile / uploadRMFileWithoutMsg 已定位，签名与回调未验证）"); },
+  async friendAdd(userId, remark) {
+    const uid = await resolveUid(userId).catch(() => null);
+    const shapes = [
+      ["reqToAddFriends", [{ uin: String(userId), uid: uid || "", remark: String(remark || "") }]],
+      ["reqToAddFriends", [String(userId), String(remark || "")]],
+      ["addBuddy", [String(userId), String(remark || "")]]
+    ];
+    const tried = [];
+    for (const [name, args] of shapes) {
+      if (typeof buddyService[name] !== "function") { tried.push(name + "(无)"); continue; }
+      try { const r = await buddyService[name].apply(buddyService, args); return { user_id: Number(userId), method: name, raw: r }; }
+      catch (e) { tried.push(name + ":" + e.message); }
+    }
+    throw new Error("加好友失败: " + tried.join(" | "));
+  },
+  async friendDelete(userId) {
+    const uid = await resolveUid(userId);
+    if (!uid) throw new Error("找不到该好友的 uid: " + userId);
+    const r = await tryCall(buddyService, ["delBuddy", "deleteBuddy", "delBuddyReq"], [uid]);
+    buddyCache.at = 0;
+    return { user_id: Number(userId), raw: r };
+  },
+  async friendRemark(userId, remark) {
+    const uid = await resolveUid(userId);
+    if (!uid) throw new Error("找不到该好友的 uid: " + userId);
+    const r = await tryCall(buddyService, ["setBuddyRemark"], [uid, String(remark || "")]);
+    buddyCache.at = 0;
+    return { user_id: Number(userId), raw: r };
+  },
+  async friendCategory(userId, categoryId) {
+    const uid = await resolveUid(userId);
+    if (!uid) throw new Error("找不到该好友的 uid: " + userId);
+    const r = await tryCall(buddyService, ["setBuddyCategory"], [uid, Number(categoryId || 0)]);
+    return { user_id: Number(userId), raw: r };
+  },
+  async markRead(chatType, peer) {
+    const ct = Number(chatType) === 2 ? 2 : 1;
+    const peerUid = ct === 2 ? String(peer) : (await resolveUid(peer) || String(peer));
+    const peerObj = { chatType: ct, peerUid: peerUid, guildId: "" };
+    const shapes = [
+      ["setMsgReadAndReport", [peerObj]],
+      ["setMsgRead", [peerObj]],
+      ["setLocalMsgRead", [peerObj]]
+    ];
+    const tried = [];
+    for (const [name, args] of shapes) {
+      if (typeof msgService[name] !== "function") { tried.push(name + "(无)"); continue; }
+      try { const r = await msgService[name].apply(msgService, args); return { method: name, raw: r }; }
+      catch (e) { tried.push(name + ":" + e.message); }
+    }
+    throw new Error("标记已读失败: " + tried.join(" | "));
+  }
+});
 
 function startOneBot() {
   if (onebot) return;

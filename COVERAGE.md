@@ -21,7 +21,7 @@
 | 鉴权 token | ✅ Bearer + access_token，配置在 onebot.json |
 | 请求-响应关联 | ✅ HTTP 同步返回，失败带 retcode/msg |
 | 幂等（job.id 去重） | ❌ 队列侧仍无（HTTP 侧天然一次一调） |
-| 限速 / 配额 | ❌ 待做 |
+| 限速 / 配额 | ✅ HTTP 发送侧 30 条/分钟（config.json 可调） |
 
 ## 二、接收侧元素解析
 
@@ -106,12 +106,12 @@
 **P0（已完成 2026-11-21）**
 1. ✅ HTTP + WS 接口层（OneBot v11 子集）+ token 鉴权
 2. ✅ 接收侧元素补全（record/video/at/reply/forward/json）+ msgId 去重
-3. ❌ 图片/视频自动下载开关（未做）
+3. ✅ 图片自动下载开关（config.json `auto_download_image`）
 
-**P1**
-4. 群管理补齐：退群、群资料、单成员、群文件上传/删除
-5. 好友管理补齐：加好友、删好友、备注、分组
-6. 标记已读 + 限速配额
+**P1（大部分已完成 2026-11-21）**
+4. 群管理：✅ 退群/群资料/单成员/删群文件；❌ 群文件上传（签名未验）
+5. 好友管理：✅ 加/删/备注/分组
+6. ✅ 标记已读（setMsgRead）+ 发送限流；❌ 队列侧幂等
 
 **P2**
 7. 群文件下载改走 `qun.qq.com` web API（`getPskey` 已有）

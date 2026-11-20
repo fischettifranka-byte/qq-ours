@@ -109,13 +109,12 @@ function actionTable() {
 
   need("delete_msg", async (p, ctx) => ctx.call.deleteMsg(p.message_id || p.msg_id));
   need("get_msg", async (p, ctx) => ctx.call.getMsg(p.message_id || p.msg_id));
-  need("mark_msg_as_read", async (p, ctx) => ctx.call.markRead(p.chat_type || (p.group_id ? 2 : 1), p.group_id || p.user_id, p.message_id));
+  need("mark_msg_as_read", async (p, ctx) => ctx.call.markRead(p.chat_type || (p.group_id ? 2 : 1), p.group_id || p.user_id));
 
   need("get_friend_list", async (p, ctx) => ctx.call.friendList(!!p.no_cache));
   need("get_group_list", async (p, ctx) => ctx.call.groupList(!!p.no_cache));
   need("get_group_member_list", async (p, ctx) => ctx.call.groupMemberList(p.group_id || p.group));
   need("get_group_member_info", async (p, ctx) => ctx.call.groupMemberInfo(p.group_id || p.group, p.user_id));
-  need("get_group_info", async (p, ctx) => ctx.call.groupInfo(p.group_id || p.group, !p.no_cache));
   need("get_group_honor_info", async (p, ctx) => ctx.call.groupHonor(p.group_id || p.group, p.type || "all"));
   need("get_stranger_info", async (p, ctx) => ctx.call.strangerInfo(p.user_id));
   need("get_cookies", async (p, ctx) => ctx.call.cookies(p.domain || "qun.qq.com"));
@@ -126,12 +125,20 @@ function actionTable() {
   need("set_group_card", async (p, ctx) => ctx.call.groupCard(p.group_id || p.group, p.user_id, p.card || ""));
   need("set_group_admin", async (p, ctx) => ctx.call.groupAdmin(p.group_id || p.group, p.user_id, p.enable !== false));
   need("set_group_leave", async (p, ctx) => ctx.call.groupLeave(p.group_id || p.group));
-  need("set_group_name", async (p, ctx) => ctx.call.groupRename(p.group_id || p.group, p.group_name || ""));
 
   need("set_friend_add_request", async (p, ctx) => ctx.call.friendAddRequest(p.flag, p.approve !== false, p.remark || ""));
   need("set_group_add_request", async (p, ctx) => ctx.call.groupAddRequest(p.flag, p.sub_type || p.type || "add", p.approve !== false, p.reason || ""));
 
   need("send_like", async (p, ctx) => ctx.call.sendLike(p.user_id, Number(p.times || 1)));
+  need("get_group_info", async (p, ctx) => ctx.call.groupInfo(p.group_id || p.group));
+  need("set_group_name", async (p, ctx) => ctx.call.groupRename(p.group_id || p.group, p.group_name || ""));
+  need("delete_group_file", async (p, ctx) => ctx.call.deleteGroupFile(p.group_id || p.group, p.file_id || p.file));
+  need("upload_group_file", async (p, ctx) => ctx.call.uploadGroupFile(p.group_id || p.group, p.file, p.name || ""));
+  need("add_friend", async (p, ctx) => ctx.call.friendAdd(p.user_id, p.remark || ""));
+  need("delete_friend", async (p, ctx) => ctx.call.friendDelete(p.user_id));
+  need("set_friend_remark", async (p, ctx) => ctx.call.friendRemark(p.user_id, p.remark || ""));
+  need("set_friend_category", async (p, ctx) => ctx.call.friendCategory(p.user_id, p.category_id));
+  need("debug_probe", async (p, ctx) => ctx.call.debug_probe(p));
   need("get_recent_contact", async (p, ctx) => ctx.call.recentContact(Number(p.count || 20)));
   return A;
 }
