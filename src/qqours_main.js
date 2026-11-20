@@ -215,8 +215,8 @@ function attachProfileService() {
     session.getFileAssistantService().addKernelFileAssistantListener({
       onFileListChanged: (...args) => {
         try {
-          const flat = JSON.stringify(args).slice(0, 1200);
-          qlog({ q: "fa_list_event", time: Date.now(), raw: flat });
+          const items = (args && args[2]) || [];
+          qlog({ q: "fa_list_event", time: Date.now(), page: args && args[0], count: items.length, items: items.map(it => ({ id: it.id, name: it.fileName, size: it.fileSize, status: it.fileStatus, path: it.filePath || "" })) });
         } catch (e) {}
       },
       onFileStatusChanged: (st) => {
