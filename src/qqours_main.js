@@ -221,6 +221,30 @@ function fetchProfile(uid, timeoutMs) {
   });
 }
 let queryRunning = false;
+let _ecdhSvc = null;
+function getECDH() {
+  if (_ecdhSvc) return _ecdhSvc;
+  const svc = new wrapper.NodeIKernelECDHService();
+  try { svc.init(); } catch (e) { log("ecdh init err", e.message); }
+  try { svc.setGuid(loginService.getMachineGuid()); } catch (e) {}
+  _ecdhSvc = svc;
+  return svc;
+}
+function pokePayload(targetUin, groupUin) {
+  const enc = (field, val) => { const bytes = [field << 3]; let v = val; do { let b = v % 128; v = Math.floor(v / 128); if (v) b += 128; bytes.push(b); } while (v); return bytes; };
+  let bytes = [].concat(enc(1, Number(targetUin)));
+  if (groupUin) bytes = bytes.concat(enc(2, Number(groupUin)));
+  else bytes = bytes.concat(enc(5, Number(targetUin)));
+  bytes = bytes.concat(enc(6, 0));
+  return Buffer.from(bytes).toString("hex");
+}
+async function doPoke(targetUin, groupUin, serviceType) {
+  const hex = pokePayload(targetUin, groupUin);
+  const r = await getECDH().sendOIDBRequest(2371, Number(serviceType || 0), 1, hex, null);
+  let out = "";
+  try { out = r instanceof Uint8Array ? Buffer.from(r).toString("hex").slice(0, 200) : JSON.stringify(r).slice(0, 300); } catch (e) { out = String(r); }
+  return out;
+}
 async function qunPskey() {
   const r = await session.getTipOffService().getPskey(["qun.qq.com"], true);
   const m = r && r.domainPskeyMap;
@@ -406,37 +430,14 @@ function startQueryQueue() {
             const r = await svc.downloadFileForFileInfo([job.info], job.savePath || "/data/qq-ours/files/inbox/");
             qlog({ q: "group_file_download2", time: Date.now(), raw: JSON.stringify(r || {}).slice(0, 200) });
           } else if (job.q === "oidb_send") {
-            const svc = (session.getECDHService ? session.getECDHService() : wrapper.NodeIKernelECDHService.get());
+            const svc = getECDH();
             const r = await svc.sendOIDBRequest(Number(job.cmd), Number(job.serviceType || 0), Number(job.subCmd || 1), job.dataHex || "", job.extra !== undefined ? job.extra : null);
             let out = "";
             try { out = r instanceof Uint8Array ? Buffer.from(r).toString("hex").slice(0, 200) : JSON.stringify(r).slice(0, 300); } catch (e) { out = String(r); }
             qlog({ q: "oidb_send", time: Date.now(), cmd: job.cmd, res: out });
           } else if (job.q === "poke") {
-            const enc = (field, val) => { const bytes = [field << 3]; let v = val; do { let b = v % 128; v = Math.floor(v / 128); if (v) b += 128; bytes.push(b); } while (v); return bytes; };
-            let bytes = [].concat(enc(1, Number(job.targetUin)));
-            if (job.groupUin) bytes = bytes.concat(enc(2, Number(job.groupUin)));
-            else bytes = bytes.concat(enc(5, Number(job.targetUin)));
-            bytes = bytes.concat(enc(6, 0));
-            const hex = Buffer.from(bytes).toString("hex");
-            const svc = (session.getECDHService ? session.getECDHService() : wrapper.NodeIKernelECDHService.get());
-            const r = await svc.sendOIDBRequest(2371, Number(job.serviceType || 0), 1, hex, null);
-            let out = "";
-            try { out = r instanceof Uint8Array ? Buffer.from(r).toString("hex").slice(0, 200) : JSON.stringify(r).slice(0, 300); } catch (e) { out = String(r); }
-            qlog({ q: "poke", time: Date.now(), target: job.targetUin, group: job.groupUin || "", hex: hex, res: out });
-          } else if (job.q === "svc_probe") {
-            const names = new Set();
-            let o = session;
-            for (let depth = 0; o && depth < 4; depth++) { Object.getOwnPropertyNames(o).forEach(n => names.add(n)); o = Object.getPrototypeOf(o); }
-            const gets = [...names].filter(n => n.startsWith("get"));
-            qlog({ q: "svc_probe", gets: gets });
-          } else if (job.q === "wrapper_probe") {
-            const keys = Object.keys(wrapper || {});
-            qlog({ q: "wrapper_probe", total: keys.length, ecdh: keys.filter(k => /ecdh/i.test(k)), oidb: keys.filter(k => /oidb|sso/i.test(k)) });
-          } else if (job.q === "ecdh_probe") {
-            const C = wrapper.NodeIKernelECDHService;
-            const statics = Object.getOwnPropertyNames(C);
-            const protos = C.prototype ? Object.getOwnPropertyNames(C.prototype) : [];
-            qlog({ q: "ecdh_probe", statics: statics, protos: protos });
+            const out = await doPoke(job.targetUin, job.groupUin, job.serviceType);
+            qlog({ q: "poke", time: Date.now(), target: job.targetUin, group: job.groupUin || "", res: out });
           } else if (job.q === "group_members") {
             const r = await groupService.getAllMemberList(String(job.groupCode), job.force === false ? false : true);
             const infos = (r && r.result && r.result.infos) || (r && r.infos);
@@ -479,6 +480,11 @@ function startSendQueue() {
           if (job.type === "recall") {
             const rr = await msgService.recallMsg(peer, [job.msgId]);
             log("RECALL ->", JSON.stringify(peer), job.msgId, "res:", JSON.stringify(rr));
+            continue;
+          }
+          if (job.type === "poke") {
+            const out = await doPoke(job.targetUin, job.groupUin, job.serviceType);
+            log("POKE ->", job.targetUin, job.groupUin || "", "res:", out);
             continue;
           }
           if (job.type === "download") {
