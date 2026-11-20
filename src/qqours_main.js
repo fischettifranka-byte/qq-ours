@@ -247,12 +247,12 @@ function startQueryQueue() {
             const r = await groupService.kickMember(String(job.groupCode), [job.uid], !!job.refuseForever, job.reason || "");
             qlog({ q: "member_kick", time: Date.now(), groupCode: String(job.groupCode), uid: job.uid, res: r || "void" });
           } else if (job.q === "group_shutup_all") {
-          const r = await groupService.setGroupShutUp(job.group, !!job.shut);
-          out.result = r;
-        } else if (job.q === "member_role") {
-          groupService.modifyMemberRole(job.group, job.uid, Number(job.role));
-          out.result = "called";
-        } else if (job.q === "member_card") {
+            const r = await groupService.setGroupShutUp(String(job.group), !!job.shut);
+            qlog({ q: "group_shutup_all", time: Date.now(), group: String(job.group), shut: !!job.shut, res: r });
+          } else if (job.q === "member_role") {
+            groupService.modifyMemberRole(String(job.group), job.uid, Number(job.role));
+            qlog({ q: "member_role", time: Date.now(), group: String(job.group), uid: job.uid, role: Number(job.role), done: true });
+          } else if (job.q === "member_card") {
             groupService.modifyMemberCardName(String(job.groupCode), job.uid, job.card || "");
             qlog({ q: "member_card", time: Date.now(), groupCode: String(job.groupCode), uid: job.uid, card: job.card || "", done: true });
           } else if (job.q === "buddy_approve") {
