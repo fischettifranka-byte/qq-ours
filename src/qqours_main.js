@@ -135,7 +135,7 @@ function attachMsgService() {
       const ss = session.getSearchService();
       ss.addKernelSearchListener({
         onSearchGroupResult: (params) => { try { qlog({ q: "search_group_result", time: Date.now(), raw: JSON.stringify(params || {}).slice(0, 1500) }); } catch (e) {} },
-        onSearchStrangerResult: () => {}, onSearchLocalInfoResult: () => {}, onSearchFileKeywordsResult: () => {}, onSearchMsgKeywordsResult: () => {}
+        onSearchStrangerResult: (params) => { try { qlog({ q: "search_stranger_result", time: Date.now(), raw: JSON.stringify(params || {}).slice(0, 1200) }); } catch (e) {} }, onSearchLocalInfoResult: () => {}, onSearchFileKeywordsResult: () => {}, onSearchMsgKeywordsResult: () => {}
       });
       log("search listener attached");
     } catch (e) { log("search listener err", e.message); }
