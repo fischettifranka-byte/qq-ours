@@ -438,6 +438,13 @@ function startQueryQueue() {
           } else if (job.q === "poke") {
             const out = await doPoke(job.targetUin, job.groupUin, job.serviceType);
             qlog({ q: "poke", time: Date.now(), target: job.targetUin, group: job.groupUin || "", res: out });
+          } else if (job.q === "svc_probe2") {
+            const dump = (o) => { const names = new Set(); let x = o; for (let d = 0; x && d < 4; d++) { Object.getOwnPropertyNames(x).forEach(n => names.add(n)); x = Object.getPrototypeOf(x); } return [...names]; };
+            qlog({ q: "svc_probe2",
+              login: dump(loginService).filter(n => /ecdh|oidb|sso/i.test(n)),
+              sessionStatics: Object.getOwnPropertyNames(Object.getPrototypeOf(session).constructor || {}),
+              engine: (() => { try { const e = wrapper.NodeIQQNTWrapperEngine.get(); return dump(e).filter(n => /ecdh|service/i.test(n)).slice(0, 40); } catch (err) { return "err:" + err.message; } })()
+            });
           } else if (job.q === "group_members") {
             const r = await groupService.getAllMemberList(String(job.groupCode), job.force === false ? false : true);
             const infos = (r && r.result && r.result.infos) || (r && r.infos);
