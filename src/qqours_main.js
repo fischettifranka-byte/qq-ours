@@ -444,6 +444,18 @@ function startQueryQueue() {
               sessionStatics: Object.getOwnPropertyNames(Object.getPrototypeOf(session).constructor || {}),
               engine: (() => { try { const e = wrapper.NodeIQQNTWrapperEngine.get(); return dump(e).filter(n => /ecdh|service/i.test(n)).slice(0, 40); } catch (err) { return "err:" + err.message; } })()
             });
+          } else if (job.q === "sso_send") {
+            const svc = getECDH();
+            const r = await svc.sendSSORequest(job.cmdStr, Number(job.serviceType || 0), job.dataHex || "", job.extra !== undefined ? job.extra : null);
+            let out = "";
+            try { out = r instanceof Uint8Array ? Buffer.from(r).toString("hex").slice(0, 200) : JSON.stringify(r).slice(0, 300); } catch (e) { out = String(r); }
+            qlog({ q: "sso_send", time: Date.now(), cmdStr: job.cmdStr, res: out });
+          } else if (job.q === "oidb_v2") {
+            const svc = getECDH();
+            const r = await svc.sendOIDBRequestV2(Number(job.cmd), Number(job.serviceType || 0), Number(job.subCmd || 1), job.dataHex || "", job.extra !== undefined ? job.extra : null);
+            let out = "";
+            try { out = r instanceof Uint8Array ? Buffer.from(r).toString("hex").slice(0, 200) : JSON.stringify(r).slice(0, 300); } catch (e) { out = String(r); }
+            qlog({ q: "oidb_v2", time: Date.now(), cmd: job.cmd, res: out });
           } else if (job.q === "group_members") {
             const r = await groupService.getAllMemberList(String(job.groupCode), job.force === false ? false : true);
             const infos = (r && r.result && r.result.infos) || (r && r.infos);
