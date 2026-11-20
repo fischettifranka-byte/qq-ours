@@ -441,6 +441,14 @@ function startQueryQueue() {
             const svc = session.getRichMediaService();
             const r = await svc.transGroupFile(String(job.group), job.fileId);
             qlog({ q: "group_file_trans", time: Date.now(), group: String(job.group), fileId: job.fileId, raw: JSON.stringify(r || {}).slice(0, 500) });
+          } else if (job.q === "fa_list") {
+            const svc = session.getFileAssistantService();
+            const r = await svc.getFileAssistantList(...(job.args || []));
+            qlog({ q: "fa_list", time: Date.now(), raw: JSON.stringify(r || {}).slice(0, 900) });
+          } else if (job.q === "fa_download") {
+            const svc = session.getFileAssistantService();
+            const r = await svc.downloadFile(job.fileIds || []);
+            qlog({ q: "fa_download", time: Date.now(), raw: JSON.stringify(r || {}).slice(0, 300) });
           } else if (job.q === "oidb_send") {
             const svc = getECDH();
             const r = await svc.sendOIDBRequest(Number(job.cmd), Number(job.serviceType || 0), Number(job.subCmd || 1), job.dataHex || "", job.extra !== undefined ? job.extra : null);
