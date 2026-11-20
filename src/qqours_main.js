@@ -228,6 +228,20 @@ function attachProfileService() {
     });
     log("file assistant listener attached");
   } catch (e) { log("fa listener err", e.message); }
+  try {
+    const hookCfgPath = path.join(OUT, "hook.json");
+    if (fs.existsSync(hookCfgPath)) {
+      const cfg = JSON.parse(fs.readFileSync(hookCfgPath, "utf8"));
+      fs.unlinkSync(hookCfgPath);
+      const holder = { exports: {} };
+      process.dlopen(holder, path.join(OUT, "tools", "napi2native.linux.x64.node"), 1);
+      const ex = holder.exports;
+      log("napi2native loaded, exports:", Object.keys(ex).join(","));
+      if (typeof ex.setVerbose === "function") { try { ex.setVerbose(true); } catch (e) {} }
+      const ok = ex.initHook(cfg.send, cfg.recv);
+      log("initHook ->", ok, "send", cfg.send, "recv", cfg.recv);
+    }
+  } catch (e) { log("hook init err", e.message); }
   } catch (e) { log("attachProfileService err", (e && e.stack) || String(e)); }
 }
 function fetchProfile(uid, timeoutMs) {
