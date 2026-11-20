@@ -75,3 +75,9 @@
 - 已试尽 RichMedia 全部下载入口：downloadFileForFileUuid / downloadFileForFileInfo / onlyDownloadFile 均返回 {} 且建任务但永不传输（等 25s+ 无落地，nt_flash_transfer.db 为 SQLCipher 加密读不了）；downloadFileForModelId 回 -1 file_model_info_vec empty（面板文件在本地消息库无 model 登记）；getGroupFileInfo 与 getRichMediaFileDir 的 promise 永不落定（勿再调，会挂住该次调用）。
 - getGroupSpace 正常（总 10G/已用 4.3G），先调它再下载也无济于事。transGroupFile 可用但那是转存微云（saveBusId 0 + 新 saveFilePath），非本地下载；文件助手列表只有 hello.txt，与群文件无关（FA 的 downloadFile 只管 FA 内文件）。
 - 判断：群文件传输引擎在真实客户端里由 UI 进程初始化，我们的壳路线没起这个模块——与戳一戳的包格式同属结构性卡点，非参数问题。实际替代路径已通：让对方把文件发到群里/私聊，走消息 downloadRichMedia 即可落地（A3 已验）。
+
+## F2 续（2026-11-20 午后，GitHub 取证）
+- 在 GitHub 找到同路插件 ESEAbsolute/qwqnt-poke 的 nativepoke.ts 与 NapCat 现行 SendPoke/nativeClient 源码，确认正确包格式：cmd=OidbSvcTrpcTcp.0xED3_1（ED3 大写）、信封 isReserved=1（OidbBase.build 默认 isUid=true）、data=Buffer.from(信封 protobuf)。逐字节与 NapCat 的 napcat-protobuf 编码一致。
+- 按正解实测仍回 145 请求包解析失败。结合本机内核返回形状是 {result,errMsg,rsp}（与 qwqnt/NapCat 预期的 {rspbuffer} 不同），判断 9.9.37/3.2.35 这版改了 JS 发送通道的内部契约；两个同路项目发包前都要求 napi2native 原生 hook 就绪，社区对这版（SnowCat 文）也是走原生 hook。
+- napi2native.linux.x64.node 现成模块在参考源码里有（23MB），但其偏移表 napi2native.json 共 124 个版本、无 3.2.35-54395（Linux）——本版 send/recv 偏移无人发布，需对 wrapper.node 做特征扫描逆向，属专场工作。
+- 事故：同日 12:39 账号被踢下线（登录已失效），主因疑为当日功能调试重启过频（登录 churn）。已修潜伏 bug：onKickedOffLine 误用未定义的 writeStatus（应为 status），此前被踢不会更新 status.json、健康巡检也报不出（commit f68485b）。用户已重新扫码恢复在线。
