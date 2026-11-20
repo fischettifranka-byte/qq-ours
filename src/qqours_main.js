@@ -475,6 +475,14 @@ function startQueryQueue() {
             const svc = session.getRichMediaService();
             const r = await svc.getGroupTransferList(String(job.group), job.arg !== undefined ? job.arg : {});
             qlog({ q: "group_transfer_list", time: Date.now(), raw: JSON.stringify(r || {}).slice(0, 700) });
+          } else if (job.q === "group_space") {
+            const svc = session.getRichMediaService();
+            const r = await svc.getGroupSpace(String(job.group));
+            qlog({ q: "group_space", time: Date.now(), raw: JSON.stringify(r || {}).slice(0, 400) });
+          } else if (job.q === "rich_dir") {
+            const svc = session.getRichMediaService();
+            const r = await svc.getRichMediaFileDir();
+            qlog({ q: "rich_dir", time: Date.now(), raw: JSON.stringify(r || {}).slice(0, 400) });
           } else if (job.q === "oidb_send") {
             const svc = getECDH();
             const r = await svc.sendOIDBRequest(Number(job.cmd), Number(job.serviceType || 0), Number(job.subCmd || 1), job.dataHex || "", job.extra !== undefined ? job.extra : null);
