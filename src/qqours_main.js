@@ -475,6 +475,13 @@ function startQueryQueue() {
             let o = us;
             for (let d = 0; o && d < 4; d++) { Object.getOwnPropertyNames(o).forEach(n => names.add(n)); o = Object.getPrototypeOf(o); }
             qlog({ q: "unify_probe", methods: [...names].filter(n => typeof us[n] === "function") });
+          } else if (job.q === "unify_search") {
+            const us = session.getUnifySearchService();
+            const fn = job.method || "search";
+            const r = await us[fn](job.arg);
+            let out = "";
+            try { out = JSON.stringify(r).slice(0, 800); } catch (e) { out = String(r); }
+            qlog({ q: "unify_search", time: Date.now(), method: fn, res: out });
           } else if (job.q === "group_members") {
             const r = await groupService.getAllMemberList(String(job.groupCode), job.force === false ? false : true);
             const infos = (r && r.result && r.result.infos) || (r && r.infos);
