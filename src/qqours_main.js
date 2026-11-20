@@ -116,6 +116,7 @@ function attachMsgService() {
     msgService = session.getMsgService();
     const listener = {
       onRecvMsg: (msgs) => { for (const m of msgs || []) recordMsg("recv", m); },
+      onGroupFileInfoUpdate: (arg) => { try { qlog({ q: "group_files_event", time: Date.now(), raw: JSON.stringify(arg || {}).slice(0, 2500) }); } catch (e) {} },
       onMsgInfoListUpdate: (msgs) => { for (const m of msgs || []) recordMsg("update", m); },
       onRecvS2CMsg: (msgs) => { for (const m of msgs || []) recordMsg("s2c", m); },
       onRichMediaDownloadComplete: (arg) => { try { log("DL complete", JSON.stringify(arg)); if (arg && arg.filePath && fs.existsSync(arg.filePath)) { const dest = path.join(OUT, "files", "inbox"); fs.mkdirSync(dest, { recursive: true }); const d = path.join(dest, path.basename(arg.filePath)); fs.copyFileSync(arg.filePath, d); log("DL saved to", d); } } catch (e) { log("dl cb err", e.message); } },
@@ -385,6 +386,10 @@ function startQueryQueue() {
             const resp = await fetch("https://user.qzone.qq.com/proxy/domain/w.qzone.qq.com/cgi-bin/likes/internal_dolike_app?g_tk=" + auth.gtk, { method: "POST", headers: { Cookie: "uin=o" + self + "; p_uin=o" + self + "; p_skey=" + auth.pk, "Content-Type": "application/x-www-form-urlencoded", Referer: "https://user.qzone.qq.com/" + target }, body: body.toString() });
             const txt = await resp.text();
             qlog({ q: "qzone_like", time: Date.now(), uin: target, tid: job.tid, raw: txt.slice(0, 200) });
+          } else if (job.q === "group_files") {
+            const svc = session.getRichMediaService();
+            await svc.getGroupFileList(String(job.group), { sortType: 1, fileCount: Number(job.count || 50), startIndex: 0, sortOrder: 2, showOnlinedocFolder: 0 });
+            qlog({ q: "group_files", time: Date.now(), group: String(job.group), note: "requested; results arrive as group_files_event" });
           } else if (job.q === "group_members") {
             const r = await groupService.getAllMemberList(String(job.groupCode), job.force === false ? false : true);
             const infos = (r && r.result && r.result.infos) || (r && r.infos);
