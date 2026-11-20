@@ -469,6 +469,12 @@ function startQueryQueue() {
             let out = "";
             try { out = r instanceof Uint8Array ? Buffer.from(r).toString("hex").slice(0, 300) : JSON.stringify(r).slice(0, 300); } catch (e) { out = String(r); }
             qlog({ q: "msso_send", time: Date.now(), cmdStr: job.cmdStr, mode: job.mode || "hex", res: out });
+          } else if (job.q === "unify_probe") {
+            const us = session.getUnifySearchService();
+            const names = new Set();
+            let o = us;
+            for (let d = 0; o && d < 4; d++) { Object.getOwnPropertyNames(o).forEach(n => names.add(n)); o = Object.getPrototypeOf(o); }
+            qlog({ q: "unify_probe", methods: [...names].filter(n => typeof us[n] === "function") });
           } else if (job.q === "group_members") {
             const r = await groupService.getAllMemberList(String(job.groupCode), job.force === false ? false : true);
             const infos = (r && r.result && r.result.infos) || (r && r.infos);
