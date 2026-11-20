@@ -310,6 +310,24 @@ function startQueryQueue() {
             if (job.wording) arg.customStatus = { faceId: "0", wording: job.wording, faceType: "0" };
             const r = await msgService.setStatus(arg);
             qlog({ q: "set_status", time: Date.now(), status: arg.status, res: r });
+          } else if (job.q === "collection_list") {
+            const svc = session.getCollectionService();
+            const r = await svc.getCollectionItemList({ category: 0, groupId: 0, forceSync: false, forceFromDb: false, timeStamp: "0", count: 20, searchDown: false });
+            const items = (r && r.collectionSearchList && r.collectionSearchList.collectionItemList) || [];
+            qlog({ q: "collection_list", time: Date.now(), count: items.length, items: items.map(it => ({ cid: it.cid, type: it.type, author: it.author && it.author.strId, brief: it.brief || it.title || "" })) });
+          } else if (job.q === "search_group") {
+            const svc = session.getSearchService();
+            const r = await svc.searchGroup({ keyWords: job.keyword || "", groupNum: 10, exactSearch: false, penetrate: "" });
+            qlog({ q: "search_group", time: Date.now(), keyword: job.keyword || "", raw: JSON.stringify(r || {}).slice(0, 800) });
+          } else if (job.q === "search_stranger") {
+            const svc = session.getSearchService();
+            const r = await svc.searchStranger(job.keyword || "", null, null);
+            qlog({ q: "search_stranger", time: Date.now(), keyword: job.keyword || "", raw: JSON.stringify(r || {}).slice(0, 800) });
+          } else if (job.q === "history") {
+            const peer = { chatType: job.chatType || 1, peerUid: String(job.peerUid), guildId: "" };
+            const r = await msgService.getMsgsBySeqAndCount(peer, "0", Number(job.count || 10), true, false);
+            const list = (r && r.msgList) || [];
+            qlog({ q: "history", time: Date.now(), peerUid: String(job.peerUid), count: list.length, msgs: list.map(m => ({ msgId: m.msgId, senderUin: m.senderUin, text: (m.elements || []).map(e => (e.textElement && e.textElement.content) || ("[t" + e.elementType + "]")).join("") })) });
           } else if (job.q === "group_members") {
             const r = await groupService.getAllMemberList(String(job.groupCode), job.force === false ? false : true);
             const infos = (r && r.result && r.result.infos) || (r && r.infos);
