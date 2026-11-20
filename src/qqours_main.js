@@ -211,6 +211,23 @@ function attachProfileService() {
       onProfileDetailInfoChanged: () => {}, onProfileSimpleChanged: () => {}, onGroupDetailInfoChange: () => {}
     });
     log("profile listener attached");
+  try {
+    session.getFileAssistantService().addKernelFileAssistantListener({
+      onFileListChanged: (...args) => {
+        try {
+          const flat = JSON.stringify(args).slice(0, 1200);
+          qlog({ q: "fa_list_event", time: Date.now(), raw: flat });
+        } catch (e) {}
+      },
+      onFileStatusChanged: (st) => {
+        try { qlog({ q: "fa_status_event", time: Date.now(), raw: JSON.stringify(st || {}).slice(0, 600) }); } catch (e) {}
+      },
+      onSessionListChanged: () => {},
+      onSessionChanged: () => {},
+      onFileSearch: () => {}
+    });
+    log("file assistant listener attached");
+  } catch (e) { log("fa listener err", e.message); }
   } catch (e) { log("attachProfileService err", (e && e.stack) || String(e)); }
 }
 function fetchProfile(uid, timeoutMs) {
