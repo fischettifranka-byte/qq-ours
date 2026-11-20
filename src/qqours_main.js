@@ -175,7 +175,19 @@ function attachBuddyService() {
   try {
     buddyService = session.getBuddyService();
     buddyService.addKernelBuddyListener({
-      onBuddyReqChange: (arg) => { try { qlog({ q: "buddy_reqs", time: Date.now(), notify: JSON.parse(JSON.stringify(arg)) }); } catch (e) { log("buddyReqChange ser err", e.message); } },
+      onBuddyReqChange: (arg) => { try { qlog({ q: "buddy_reqs", time: Date.now(), notify: JSON.parse(JSON.stringify(arg)) }); } catch (e) { log("buddyReqChange ser err", e.message); }
+        try {
+          const reqs = (arg && arg.buddyReqs) || [];
+          const pf = path.join(OUT, "pending_approvals.jsonl");
+          let existing = "";
+          try { existing = fs.readFileSync(pf, "utf8"); } catch (e) {}
+          for (const r of reqs) {
+            if (r.isDecide || r.isAgreed) continue;
+            const key = ""friendUid":"" + r.friendUid + """;
+            if (existing.includes(key)) continue;
+            fs.appendFileSync(pf, JSON.stringify({ kind: "buddy_req", time: Date.now(), friendUid: r.friendUid, friendNick: r.friendNick || "", reqTime: r.reqTime, addSource: r.addSource }) + String.fromCharCode(10));
+          }
+        } catch (e) {} },
       onBuddyListChange: () => {}, onBuddyListChangedV2: () => {}, onBuddyRemarkUpdated: () => {},
       onBuddyReqUnreadCntChange: () => {}, onDoubtBuddyReqChange: () => {}, onCheckBuddySettingResult: () => {}, onDelBatchBuddyInfos: () => {}
     });
