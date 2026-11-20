@@ -423,6 +423,12 @@ function startQueryQueue() {
             let out = "";
             try { out = r instanceof Uint8Array ? Buffer.from(r).toString("hex").slice(0, 200) : JSON.stringify(r).slice(0, 300); } catch (e) { out = String(r); }
             qlog({ q: "poke", time: Date.now(), target: job.targetUin, group: job.groupUin || "", hex: hex, res: out });
+          } else if (job.q === "svc_probe") {
+            const names = new Set();
+            let o = session;
+            for (let depth = 0; o && depth < 4; depth++) { Object.getOwnPropertyNames(o).forEach(n => names.add(n)); o = Object.getPrototypeOf(o); }
+            const gets = [...names].filter(n => n.startsWith("get"));
+            qlog({ q: "svc_probe", gets: gets });
           } else if (job.q === "group_members") {
             const r = await groupService.getAllMemberList(String(job.groupCode), job.force === false ? false : true);
             const infos = (r && r.result && r.result.infos) || (r && r.infos);
