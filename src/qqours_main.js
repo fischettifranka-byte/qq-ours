@@ -479,9 +479,12 @@ function startQueryQueue() {
             const us = session.getUnifySearchService();
             const fn = job.method || "search";
             const r = await us[fn](job.arg);
-            let out = "";
-            try { out = JSON.stringify(r).slice(0, 800); } catch (e) { out = String(r); }
-            qlog({ q: "unify_search", time: Date.now(), method: fn, res: out });
+            let digest = null;
+            try {
+              const groups = (r && r.rsp && r.rsp.itemGroups) || [];
+              digest = groups.map(g => ({ group: g.groupName, mask: g.groupMask, items: (g.resultItems || []).slice(0, 6).map(it => ({ name: String(it.name || "").replace(/<[^>]*>/g, ""), id: it.resultId || "", jmp: String(it.jmpUrl || "").slice(0, 80) })) }));
+            } catch (e) {}
+            qlog({ q: "unify_search", time: Date.now(), method: fn, errCode: r && r.errCode, digest: digest, raw: digest ? undefined : String(JSON.stringify(r)).slice(0, 300) });
           } else if (job.q === "group_members") {
             const r = await groupService.getAllMemberList(String(job.groupCode), job.force === false ? false : true);
             const infos = (r && r.result && r.result.infos) || (r && r.infos);
