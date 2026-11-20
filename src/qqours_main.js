@@ -401,6 +401,10 @@ function startQueryQueue() {
             const info = { fileId: job.fileId, fileName: job.fileName || "", fileSize: String(job.fileSize || "0"), fileModelId: String(job.fileModelId || "0") };
             const r = await svc.downloadFileForFileUuid(peer, job.fileId, [info]);
             qlog({ q: "group_file_download", time: Date.now(), group: String(job.group), fileId: job.fileId, raw: JSON.stringify(r || {}).slice(0, 300) });
+          } else if (job.q === "group_file_download2") {
+            const svc = session.getRichMediaService();
+            const r = await svc.downloadFileForFileInfo([job.info], job.savePath || "/data/qq-ours/files/inbox/");
+            qlog({ q: "group_file_download2", time: Date.now(), raw: JSON.stringify(r || {}).slice(0, 200) });
           } else if (job.q === "group_members") {
             const r = await groupService.getAllMemberList(String(job.groupCode), job.force === false ? false : true);
             const infos = (r && r.result && r.result.infos) || (r && r.infos);
