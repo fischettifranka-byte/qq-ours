@@ -302,6 +302,14 @@ function startQueryQueue() {
             const md = await msgService.getMsgsIncludeSelf({ chatType: job.chatType || 2, guildId: "", peerUid: String(job.peer) }, String(job.msgId), 1, false);
             const m0 = md && md.msgList && md.msgList[0];
             qlog({ q: "msg_probe", found: !!m0, msgId: m0 && m0.msgId, msgSeq: m0 && m0.msgSeq, msgRandom: m0 && m0.msgRandom, senderUin: m0 && m0.senderUin });
+          } else if (job.q === "set_avatar") {
+            const r = await profileService.setHeader(job.path);
+            qlog({ q: "set_avatar", time: Date.now(), res: r });
+          } else if (job.q === "set_status") {
+            const arg = { status: Number(job.status || 10), extStatus: Number(job.extStatus || 0), batteryStatus: 0 };
+            if (job.wording) arg.customStatus = { faceId: "0", wording: job.wording, faceType: "0" };
+            const r = await msgService.setStatus(arg);
+            qlog({ q: "set_status", time: Date.now(), status: arg.status, res: r });
           } else if (job.q === "group_members") {
             const r = await groupService.getAllMemberList(String(job.groupCode), job.force === false ? false : true);
             const infos = (r && r.result && r.result.infos) || (r && r.infos);
