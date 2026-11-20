@@ -16,16 +16,18 @@
 | 项 | 状态 |
 |---|---|
 | 发送/查询队列（append-only + 游标） | ✅ 已通 |
-| HTTP API | ❌ 未实现 |
-| WebSocket 事件推送 | ❌ 未实现（现在只能读 inbox.jsonl） |
-| 鉴权 token | ❌ 只有文件权限 |
-| 请求-响应关联（request_id 回执） | ❌ 单向写队列，结果要自己读 query_results.jsonl |
-| 幂等（job.id 去重） | ❌ 崩了重放会重复发 |
-| 限速 / 配额 | ❌ 1.5s 一轮可连发几十条 |
+| HTTP API | ✅ 已实现（OneBot v11 子集，见 API.md） |
+| WebSocket 事件推送 | ✅ 已实现（message / heartbeat / notice） |
+| 鉴权 token | ✅ Bearer + access_token，配置在 onebot.json |
+| 请求-响应关联 | ✅ HTTP 同步返回，失败带 retcode/msg |
+| 幂等（job.id 去重） | ❌ 队列侧仍无（HTTP 侧天然一次一调） |
+| 限速 / 配额 | ❌ 待做 |
 
 ## 二、接收侧元素解析
 
-已通：`text(1)`、`pic(2)`（仅元数据）、`file(3)`、`reply(7)` / `at` 的字段（未结构化）
+已通（2026-11-21 补齐）：`text(1)`、`at`、`pic(2)`、`file(3)`、`record(4)`、`video(5)`、
+`face(6)`、`reply(7)`、`json(8)`、`mface(9)`、`forward(10)`，统一映射为 OneBot 消息段；
+同一条消息按 msgId 去重（LRU 3000），不再 recv/update 双写。
 
 缺失（内核字段都在，只是没解）：
 
@@ -101,10 +103,10 @@
 
 ## 建议优先级
 
-**P0（一周内）**
-1. HTTP + WS 接口层（OneBot v11 子集）+ token 鉴权 + request_id 回执
-2. 接收侧元素补全（voice/video/at/reply/forward）+ msgId 去重
-3. 图片/视频自动下载开关
+**P0（已完成 2026-11-21）**
+1. ✅ HTTP + WS 接口层（OneBot v11 子集）+ token 鉴权
+2. ✅ 接收侧元素补全（record/video/at/reply/forward/json）+ msgId 去重
+3. ❌ 图片/视频自动下载开关（未做）
 
 **P1**
 4. 群管理补齐：退群、群资料、单成员、群文件上传/删除

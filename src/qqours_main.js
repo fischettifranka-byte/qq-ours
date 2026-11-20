@@ -4,6 +4,7 @@
 const fs = require("fs");
 const path = require("path");
 const os = require("os");
+const { makeServer: makeOneBot } = require("./onebot.js");
 const OUT = "/data/qq-ours";
 const LOGF = path.join(OUT, "boot.log");
 const DEV_NAME = process.env.QQ_DEV_NAME || "ubuntu-desktop";
@@ -123,17 +124,52 @@ log("session ready:", !!session, "startup:", !!startupSession);
 let selfInfo = null;
 let msgService = null;
 
-function extractText(elements) {
-  const parts = [];
-  for (const el of elements || []) {
-    if (el && el.elementType === 1 && el.textElement) parts.push(el.textElement.content || "");
-    else if (el && el.elementType === 2) parts.push("[pic]");
-    else if (el) parts.push("[el" + el.elementType + "]");
+function elementToSegment(el) {
+  const t = el && el.elementType;
+  if (t === 1 && el.textElement) {
+    const te = el.textElement;
+    if (te.atType === 2 || te.atType === 1) return { type: "at", data: { qq: String(te.atUid || ""), name: String(te.content || "").replace(/^@/, "").trim() } };
+    return { type: "text", data: { text: te.content || "" } };
   }
-  return parts.join("");
+  if (t === 2 && el.picElement) { const p = el.picElement; return { type: "image", data: { file: p.fileName || "", url: p.originImageUrl || "", file_size: String(p.fileSize || ""), md5: p.md5HexStr || "" } }; }
+  if (t === 3 && el.fileElement) { const f = el.fileElement; return { type: "file", data: { file: f.fileName || "", file_size: String(f.fileSize || ""), file_id: f.fileUuid || "" } }; }
+  if (t === 4 && el.pttElement) { const p = el.pttElement; return { type: "record", data: { file: p.fileName || "", file_size: String(p.fileSize || ""), duration: Number(p.duration || 0) } }; }
+  if (t === 5 && el.videoElement) { const v = el.videoElement; return { type: "video", data: { file: v.fileName || "", file_size: String(v.fileSize || ""), duration: Number(v.fileTime || 0) } }; }
+  if (t === 6 && el.faceElement) return { type: "face", data: { id: String(el.faceElement.faceIndex || ""), text: el.faceElement.faceText || "" } };
+  if (t === 7 && el.replyElement) return { type: "reply", data: { id: String(el.replyElement.replayMsgId || "") } };
+  if (t === 8 && el.arkElement) return { type: "json", data: { data: el.arkElement.bytesData || "" } };
+  if (t === 9) return { type: "mface", data: { summary: (el.faceElement && el.faceElement.faceText) || "" } };
+  if (t === 10) return { type: "forward", data: { id: String((el.forwardElement && el.forwardElement.resId) || "") } };
+  return { type: "unknown", data: { element_type: String(t) } };
+}
+function extractText(elements) {
+  return (elements || []).map(el => {
+    const t = el && el.elementType;
+    if (t === 1 && el.textElement) return el.textElement.content || "";
+    return "[" + elementToSegment(el).type + "]";
+  }).join("");
+}
+function toOneBotSegments(elements) {
+  const out = [];
+  for (const el of elements || []) {
+    const seg = elementToSegment(el);
+    if (seg.type !== "unknown") out.push(seg);
+  }
+  return out;
+}
+const seenMsgIds = new Set();
+const seenOrder = [];
+function firstSeenMsgId(id) {
+  const k = String(id || "");
+  if (!k) return true;
+  if (seenMsgIds.has(k)) return false;
+  seenMsgIds.add(k); seenOrder.push(k);
+  if (seenOrder.length > 3000) { const old = seenOrder.shift(); seenMsgIds.delete(old); }
+  return true;
 }
 function recordMsg(src, m) {
   try {
+    if (!firstSeenMsgId(m.msgId)) return;
     const rec = {
       src: src, time: Date.now(),
       msgId: m.msgId, msgSeq: m.msgSeq, msgTime: m.msgTime, clientSeq: m.clientSeq,
@@ -149,6 +185,23 @@ function recordMsg(src, m) {
     };
     fs.appendFileSync(path.join(OUT, "inbox.jsonl"), JSON.stringify(rec) + "\n");
     log("MSG", src, "chatType", rec.chatType, "from", rec.senderUin || rec.senderUid, "text:", rec.text);
+    if (src === "recv" || src === "s2c") {
+      const isGroup = Number(m.chatType) === 2;
+      pushEvent({
+        time: Number(m.msgTime) || Math.floor(Date.now() / 1000),
+        self_id: Number(selfInfo && selfInfo.uin) || 0,
+        post_type: "message",
+        message_type: isGroup ? "group" : "private",
+        sub_type: "normal",
+        message_id: m.msgId,
+        group_id: isGroup ? (Number(m.peerUid) || 0) : undefined,
+        user_id: Number(m.senderUin) || 0,
+        sender: { user_id: Number(m.senderUin) || 0, nickname: m.sendNickName || "" },
+        message: toOneBotSegments(m.elements),
+        raw_message: rec.text,
+        message_format: "array"
+      });
+    }
   } catch (e) { log("recordMsg err", e.message); }
 }
 function attachMsgService() {
@@ -167,7 +220,7 @@ function attachMsgService() {
       onRecvS2CMsg: (msgs) => { for (const m of msgs || []) recordMsg("s2c", m); },
       onRichMediaDownloadComplete: (arg) => { try { log("DL complete", JSON.stringify(arg)); if (arg && arg.filePath && fs.existsSync(arg.filePath)) { const dest = path.join(OUT, "files", "inbox"); fs.mkdirSync(dest, { recursive: true }); const d = path.join(dest, path.basename(arg.filePath)); fs.copyFileSync(arg.filePath, d); log("DL saved to", d); } } catch (e) { log("dl cb err", e.message); } },
       onMsgRecall: (...a) => log("msg recall", ...a),
-      onKickedOffLine: (...a) => { log("KICKED OFFLINE", ...a); status({ phase: "kicked", at: Date.now() }); }
+      onKickedOffLine: (...a) => { log("KICKED OFFLINE", ...a); status({ phase: "kicked", at: Date.now() }); pushEvent({ time: Math.floor(Date.now() / 1000), self_id: Number(selfInfo && selfInfo.uin) || 0, post_type: "notice", notice_type: "offline", message: String(a && a[0] && a[0].tipsDesc || "kicked") }); }
     };
     msgService.addKernelMsgListener(listener);
     log("msg listener attached");
@@ -183,6 +236,7 @@ function attachMsgService() {
     status({ phase: "online", uin: selfInfo && selfInfo.uin, uid: selfInfo && selfInfo.uid });
     startSendQueue();
     presenceLoop();
+    startOneBot();
   } catch (e) { log("attachMsgService err", (e && e.stack) || String(e)); }
 }
 // 存在感：按本地时间在 在线/离开/忙碌/勿扰 之间漂移，夜间以离开为主
@@ -205,7 +259,7 @@ function attachGroupService() {
   try {
     groupService = session.getGroupService();
     const gl = {
-      onGroupListUpdate: (updateType, groupList) => { qlog({ q: "group_list", time: Date.now(), updateType: updateType, groups: (groupList || []).map(g => ({ groupCode: g.groupCode, groupName: g.groupName, memberCount: g.memberCount, maxMemberCount: g.maxMemberCount, ownerUid: g.ownerUid })) }); },
+      onGroupListUpdate: (updateType, groupList) => { const arr = (groupList || []).map(g => ({ group_id: Number(g.groupCode) || 0, group_name: g.groupName || "", member_count: Number(g.memberCount) || 0, max_member_count: Number(g.maxMemberCount || g.maxMemberNum || 0) || 0 })); lastGroupList = arr; qlog({ q: "group_list", time: Date.now(), updateType: updateType, groups: (groupList || []).map(g => ({ groupCode: g.groupCode, groupName: g.groupName, memberCount: g.memberCount, maxMemberCount: g.maxMemberCount, ownerUid: g.ownerUid })) }); if (groupListWaiter) { const w = groupListWaiter; groupListWaiter = null; w(arr); } },
       onMemberListChange: () => {}, onMemberInfoChange: () => {}, onSearchMemberChange: () => {},
       onShutUpMemberListChanged: () => {}, onGroupDetailInfoUpdate: () => {}, onGroupExtListUpdate: () => {},
       onGroupBulletinUpdate: () => {}, onGroupAdminListUpdate: () => {}, onGroupMemberMaxNumUpdate: () => {},
@@ -766,6 +820,251 @@ function startSendQueue() {
     } catch (e) { log("send queue err", e.message); }
   }, 1500);
   log("send queue watcher started");
+}
+
+
+// ============ OneBot 接口层（协议在 onebot.js，这里做动作实现） ============
+let onebot = null;
+function pushEvent(ev) { try { if (onebot) onebot.push(ev); } catch (e) {} }
+
+// 媒体元素构造：与发送队列同一套参数，队列侧暂留原实现（后续统一）
+function buildMediaElement(type, filePath) {
+  const buf = fs.readFileSync(filePath);
+  const md5 = require("crypto").createHash("md5").update(buf).digest("hex");
+  const fileName = path.basename(filePath);
+  if (type === "image") {
+    let mediaPath = filePath;
+    try {
+      mediaPath = msgService.getRichMediaFilePathForGuild({ md5HexStr: md5, fileName: fileName, elementType: 2, elementSubType: 0, thumbSize: 0, needCreate: true, downloadType: 1, file_uuid: "" });
+      if (mediaPath && mediaPath !== filePath) fs.copyFileSync(filePath, mediaPath);
+    } catch (e) { log("richmedia path err", e.message); }
+    let w = 800, h = 800;
+    if (buf.length > 24 && buf[0] === 0x89 && buf[1] === 0x50) { w = buf.readUInt32BE(16); h = buf.readUInt32BE(20); }
+    const ext = (fileName.split(".").pop() || "").toLowerCase();
+    const picType = ext === "png" ? 1001 : ext === "gif" ? 2000 : ext === "webp" ? 1002 : 1000;
+    return { elementType: 2, elementId: "", picElement: { md5HexStr: md5, fileSize: String(buf.length), picWidth: w, picHeight: h, fileName: fileName, sourcePath: mediaPath, original: true, picType: picType, picSubType: 0, fileUuid: "", fileSubId: "", thumbFileSize: 0, summary: "" } };
+  }
+  if (type === "file") {
+    let mediaPath = filePath;
+    try {
+      mediaPath = msgService.getRichMediaFilePathForGuild({ md5HexStr: md5, fileName: fileName, elementType: 3, elementSubType: 0, thumbSize: 0, needCreate: true, downloadType: 1, file_uuid: "" });
+      if (mediaPath && mediaPath !== filePath) fs.copyFileSync(filePath, mediaPath);
+    } catch (e) { log("richmedia path err", e.message); }
+    return { elementType: 3, elementId: "", fileElement: { fileName: fileName, folderId: "", filePath: mediaPath, fileSize: String(buf.length) } };
+  }
+  if (type === "record") {
+    const { execFileSync } = require("child_process");
+    const stamp = Date.now();
+    const tmpWav = "/tmp/qqours_api_" + stamp + ".wav";
+    execFileSync("ffmpeg", ["-y", "-v", "error", "-i", filePath, "-ar", "24000", "-ac", "1", tmpWav]);
+    const silk = require("/data/qq-ours/node_modules/silk-wasm");
+    const enc = silk.encode(fs.readFileSync(tmpWav), 0);
+    const silkBuf = Buffer.from(enc.data);
+    const smd5 = require("crypto").createHash("md5").update(silkBuf).digest("hex");
+    const silkName = "qqours_api_" + stamp + ".silk";
+    let mediaPath = msgService.getRichMediaFilePathForGuild({ md5HexStr: smd5, fileName: silkName, elementType: 4, elementSubType: 0, thumbSize: 0, needCreate: true, downloadType: 1, file_uuid: "" });
+    if (mediaPath) fs.writeFileSync(mediaPath, silkBuf);
+    return { elementType: 4, elementId: "", pttElement: { fileName: silkName, filePath: mediaPath, md5HexStr: smd5, fileSize: String(silkBuf.length), duration: Math.max(1, Math.round(enc.duration / 1000)), formatType: 1, voiceType: 1, voiceChangeType: 0, canConvert2Text: true, waveAmplitudes: [0, 18, 9, 23, 16, 17, 16, 15, 44, 17, 24, 20, 14, 15, 17], fileSubId: "", playState: 1, autoConvertText: 0, storeID: 0, otherBusinessInfo: { aiVoiceType: 0 } } };
+  }
+  if (type === "video") {
+    let mediaPath = msgService.getRichMediaFilePathForGuild({ md5HexStr: md5, fileName: fileName, elementType: 5, elementSubType: 0, thumbSize: 0, needCreate: true, downloadType: 1, file_uuid: "" });
+    if (mediaPath && mediaPath !== filePath) fs.copyFileSync(filePath, mediaPath);
+    const { execFileSync } = require("child_process");
+    let dur = 10, vw = 720, vh = 1280;
+    try {
+      const probe = JSON.parse(execFileSync("ffprobe", ["-v", "quiet", "-print_format", "json", "-show_format", "-show_streams", filePath], { encoding: "utf8" }));
+      dur = Math.max(1, Math.round(parseFloat(probe.format.duration || 10)));
+      const vs = (probe.streams || []).find(x => x.codec_type === "video");
+      if (vs) { vw = vs.width || vw; vh = vs.height || vh; }
+    } catch (e) { log("ffprobe err", e.message); }
+    const thumbDir = path.dirname(String(mediaPath).replace("/Ori/", "/Thumb/"));
+    fs.mkdirSync(thumbDir, { recursive: true });
+    const thumbPath = path.join(thumbDir, md5 + "_0.png");
+    try { execFileSync("ffmpeg", ["-y", "-v", "error", "-ss", "1", "-i", filePath, "-frames:v", "1", thumbPath]); } catch (e) { log("ffmpeg thumb err", e.message); }
+    const thumbBuf = fs.readFileSync(thumbPath);
+    const thumbMd5 = require("crypto").createHash("md5").update(thumbBuf).digest("hex");
+    return { elementType: 5, elementId: "", videoElement: { fileName: fileName, filePath: mediaPath, videoMd5: md5, thumbMd5: thumbMd5, fileTime: dur, thumbPath: new Map([[0, thumbPath]]), thumbSize: thumbBuf.length, thumbWidth: vw, thumbHeight: vh, fileSize: String(buf.length) } };
+  }
+  throw new Error("不支持的媒体类型: " + type);
+}
+
+// uin -> uid（只对好友有效）
+let buddyCache = { at: 0, byUin: new Map(), list: [] };
+async function loadBuddies(force) {
+  if (!force && buddyCache.at && Date.now() - buddyCache.at < 300000) return buddyCache;
+  const r = await buddyService.getBuddyListV2("qqours", false, 0);
+  const cats = (r && r.data) || [];
+  const byUin = new Map(); const list = [];
+  for (const c of cats) {
+    for (const uid of (c.buddyUids || [])) {
+      let uin = "", nick = "", remark = "";
+      try {
+        const info = await fetchProfile(uid);
+        uin = info && info.uin ? String(info.uin) : "";
+        const ci = (info && info.simpleInfo && info.simpleInfo.coreInfo) || {};
+        nick = ci.nick || ""; remark = ci.remark || "";
+      } catch (e) {}
+      if (uin) byUin.set(uin, uid);
+      list.push({ user_id: Number(uin) || 0, nickname: nick, remark: remark, uid: uid });
+    }
+  }
+  buddyCache = { at: Date.now(), byUin, list };
+  return buddyCache;
+}
+async function resolveUid(uin) {
+  const k = String(uin);
+  if (k.indexOf("u_") === 0) return k;
+  const c = await loadBuddies(false);
+  return c.byUin.get(k) || null;
+}
+
+async function apiSend(chatType, peer, segs) {
+  const ct = Number(chatType) === 2 ? 2 : 1;
+  let peerUid;
+  if (ct === 2) peerUid = String(peer);
+  else {
+    peerUid = await resolveUid(peer);
+    if (!peerUid) throw new Error("找不到 uin=" + peer + " 对应的 uid（私聊只支持好友，请先让 get_friend_list 拉到）");
+  }
+  const elements = [];
+  for (const seg of segs || []) {
+    const d = seg.data || {};
+    if (seg.type === "reply") {
+      const got = await msgService.getMsgsByMsgId({ chatType: ct, peerUid: peerUid, guildId: "" }, [String(d.id)]);
+      const rm = got && got.msgList && got.msgList[0];
+      if (!rm) throw new Error("回复目标不存在: " + d.id);
+      elements.push({ elementType: 7, elementId: "", replyElement: { replayMsgSeq: rm.msgSeq, replayMsgId: rm.msgId, senderUin: rm.senderUin, senderUinStr: rm.senderUin, replyMsgClientSeq: rm.clientSeq } });
+    } else if (seg.type === "text") elements.push(textElement(d.text || ""));
+    else if (seg.type === "at") elements.push({ elementType: 1, elementId: "", textElement: { content: "@" + (d.name || d.qq) + " ", atType: 2, atUid: String(d.qq || ""), atTinyId: "", atNtUid: d.uid || "" } });
+    else if (seg.type === "face") elements.push({ elementType: 6, elementId: "", faceElement: { faceIndex: Number(d.id || 14), faceType: 1, faceText: d.text || "", sourceType: 1 } });
+    else if (seg.type === "image" || seg.type === "file" || seg.type === "record" || seg.type === "video") {
+      const p = d.file || d.path || d.url;
+      if (!p || !fs.existsSync(p)) throw new Error("媒体文件不存在: " + p);
+      elements.push(buildMediaElement(seg.type, p));
+    } else throw new Error("不支持的段类型: " + seg.type);
+  }
+  if (!elements.length) throw new Error("空消息");
+  const peerObj = { chatType: ct, peerUid: peerUid, guildId: "" };
+  const res = await msgService.sendMsg("0", peerObj, elements, new Map());
+  let mid = res && (res.msgId || (res.result && res.result.msgId) || 0);
+  if (!mid) {
+    try {
+      const t0 = Math.floor(Date.now() / 1000) - 20;
+      const got = await msgService.getMsgsIncludeSelf(peerObj, "", 5, false);
+      let best = null;
+      for (const m of ((got && got.msgList) || [])) {
+        if (String(m.senderUin) !== String(selfInfo && selfInfo.uin)) continue;
+        if (Number(m.msgTime || 0) < t0) continue;
+        if (!best || Number(m.msgTime) >= Number(best.msgTime)) best = m;
+      }
+      if (best) mid = best.msgId;
+    } catch (e) { log("取 message_id 失败", e.message); }
+  }
+  return { message_id: String(mid || 0), res: res };
+}
+
+function findInboxByMsgId(msgId) {
+  try {
+    const lines = fs.readFileSync(path.join(OUT, "inbox.jsonl"), "utf8").split(String.fromCharCode(10));
+    for (let i = lines.length - 1; i >= 0; i--) {
+      if (!lines[i].trim()) continue;
+      let r; try { r = JSON.parse(lines[i]); } catch (e) { continue; }
+      if (String(r.msgId) === String(msgId)) return r;
+    }
+  } catch (e) {}
+  return null;
+}
+
+let lastGroupList = null;
+let groupListWaiter = null;
+function requestGroupList() {
+  return new Promise((resolve) => {
+    groupListWaiter = resolve;
+    try { groupService.getGroupList(false); } catch (e) { groupListWaiter = null; resolve(lastGroupList); return; }
+    setTimeout(() => { if (groupListWaiter === resolve) { groupListWaiter = null; resolve(lastGroupList); } }, 5000);
+  });
+}
+
+const apiCalls = {
+  loginInfo: () => {
+    let nick = (selfInfo && (selfInfo.nickName || selfInfo.nick)) || "";
+    if (!nick && buddyCache.list.length) { const me = buddyCache.list.find(x => String(x.user_id) === String(selfInfo && selfInfo.uin)); if (me) nick = me.nickname || ""; }
+    return { user_id: Number(selfInfo && selfInfo.uin) || 0, nickname: nick };
+  },
+  send: apiSend,
+  async deleteMsg(messageId) {
+    const rec = findInboxByMsgId(messageId);
+    if (!rec) throw new Error("inbox 里没有这条消息: " + messageId);
+    const peer = { chatType: rec.chatType, peerUid: rec.peerUid, guildId: "" };
+    const r = await msgService.recallMsg(peer, [String(messageId)]);
+    return { message_id: messageId, res: r };
+  },
+  async getMsg(messageId) {
+    const rec = findInboxByMsgId(messageId);
+    if (!rec) throw new Error("inbox 里没有这条消息: " + messageId);
+    return { message_id: String(rec.msgId), message_type: Number(rec.chatType) === 2 ? "group" : "private", group_id: Number(rec.chatType) === 2 ? Number(rec.peerUid) : undefined, user_id: Number(rec.senderUin) || 0, raw_message: rec.text, time: Math.floor((rec.msgTime || rec.time / 1000)), message: rec.elements ? rec.elements.map(e => ({ type: "raw", data: e })) : [] };
+  },
+  async markRead() { throw new Error("尚未实现: 标记已读（内核未定位到对应方法）"); },
+  async friendList(force) { const c = await loadBuddies(force); return c.list; },
+  async groupList() {
+    const groups = await requestGroupList();
+    if (!groups) throw new Error("群列表拉取超时，稍后再试");
+    return groups;
+  },
+  async groupMemberList(groupId) {
+    const r = await groupService.getAllMemberList(String(groupId), true);
+    const infos = (r && r.result && r.result.infos) || (r && r.infos);
+    const arr = infos instanceof Map ? [...infos.values()] : Object.values(infos || {});
+    return arr.map(m => ({ group_id: Number(groupId), user_id: Number(m.uin) || 0, nickname: m.nick || "", card: m.cardName || "", role: Number(m.role) === 4 ? "owner" : Number(m.role) === 3 ? "admin" : "member", uid: m.uid }));
+  },
+  async groupMemberInfo(groupId, userId) {
+    const list = await apiCalls.groupMemberList(groupId);
+    const hit = list.find(m => String(m.user_id) === String(userId));
+    if (!hit) throw new Error("群成员不存在");
+    return hit;
+  },
+  async groupInfo(groupId) { throw new Error("尚未实现: get_group_info（内核 getGroupDetailInfo 未接）"); },
+  async groupHonor() { throw new Error("尚未实现: 群荣誉"); },
+  async strangerInfo(userId) {
+    const info = await profileService.getUserDetailInfoByUin(String(userId));
+    return { user_id: Number(userId) || 0, raw: info };
+  },
+  async cookies(domain) { const pk = await qunPskey(); return { cookies: "p_skey=" + (pk || "") }; },
+  async groupKick(groupId, userId, reject) { await groupService.kickMember(String(groupId), [String(userId)], !!reject, ""); return null; },
+  async groupBan(groupId, userId, duration) { await groupService.setMemberShutUp(String(groupId), [{ uid: String(userId), timeStamp: Number(duration || 0) }]); return null; },
+  async groupWholeBan(groupId, enable) { await groupService.setGroupShutUp(String(groupId), !!enable); return null; },
+  async groupCard(groupId, userId, card) { groupService.modifyMemberCardName(String(groupId), String(userId), String(card || "")); return null; },
+  async groupAdmin(groupId, userId, enable) { groupService.modifyMemberRole(String(groupId), String(userId), enable ? 3 : 2); return null; },
+  async groupLeave(groupId) { await groupService.quitGroup(String(groupId)); return null; },
+  async groupRename() { throw new Error("尚未实现: 改群名（modifyGroupExtInfo 未接）"); },
+  async friendAddRequest(flag, approve) {
+    const parts = String(flag).split("|");
+    const friendUid = parts[0], reqTime = parts[1] || String(Date.now());
+    await buddyService.approvalFriendRequest({ friendUid: friendUid, reqTime: reqTime, accept: !!approve });
+    return null;
+  },
+  async groupAddRequest(flag, subType, approve) {
+    const parts = String(flag).split("|");
+    const seq = parts[0], type = parts[1] || 5, groupCode = parts[2] || "";
+    await groupService.operateSysNotify(false, { operateType: approve ? 1 : 2, targetMsg: { seq: String(seq), type: Number(type), groupCode: String(groupCode), postscript: " " } });
+    return null;
+  },
+  async sendLike() { throw new Error("尚未实现: 名片赞（需 OIDB，同戳一戳待走 msso_send）"); },
+  async recentContact() { throw new Error("尚未实现: 最近会话（RecentContactService 未接）"); }
+};
+
+function startOneBot() {
+  if (onebot) return;
+  try {
+    const cfgPath = path.join(OUT, "onebot.json");
+    let cfg = { enabled: true, host: "127.0.0.1", port: 5700, token: "" };
+    if (fs.existsSync(cfgPath)) { try { cfg = Object.assign(cfg, JSON.parse(fs.readFileSync(cfgPath, "utf8"))); } catch (e) { log("onebot.json 解析失败", e.message); } }
+    if (!cfg.enabled) { log("OneBot 已禁用（onebot.json enabled=false）"); return; }
+    onebot = makeOneBot({ token: cfg.token, call: apiCalls });
+    onebot.listen(cfg.host || "127.0.0.1", Number(cfg.port || 5700))
+      .then(() => log("OneBot HTTP/WS 已监听", (cfg.host || "127.0.0.1") + ":" + (cfg.port || 5700), "token", cfg.token ? "已启用" : "未设置"))
+      .catch(e => log("OneBot 监听失败", e.message));
+  } catch (e) { log("OneBot 启动异常", (e && e.stack) || String(e)); }
 }
 
 async function initSession(res) {

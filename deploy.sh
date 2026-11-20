@@ -6,7 +6,9 @@
 set -e
 cd "$(dirname "$0")"
 node --check src/qqours_main.js
+node --check src/onebot.js
 cp src/qqours_main.js /opt/QQ/resources/app/qqours_main.js
+cp src/onebot.js /opt/QQ/resources/app/onebot.js
 python3 - <<PYEOF
 import json
 p = "/opt/QQ/resources/app/package.json"
@@ -18,10 +20,11 @@ if d.get("main") != "./qqours_main.js":
 else:
     print("package.json main already set")
 PYEOF
+chmod 644 /opt/QQ/resources/app/qqours_main.js /opt/QQ/resources/app/onebot.js
 node --check /opt/QQ/resources/app/qqours_main.js
+node --check /opt/QQ/resources/app/onebot.js
 echo "deployed OK"
 if [ "$1" = "restart" ]; then
-  pkill -u qqrun -f /opt/QQ/qq || true
-  sleep 3
-  ./ops/start.sh
+  echo "走 systemd 优雅重启（不要 pkill）"
+  systemctl restart qqours
 fi

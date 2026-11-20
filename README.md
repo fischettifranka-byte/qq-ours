@@ -6,6 +6,8 @@ dlopen wrapper.node 调用内核服务（NapCat v4.18.42 归档源码仅作逆�
 
 首次使用先看 `CONFIG.md`（账号/群/服务器地址都换成了占位符，替换后即可运行）。
 
+接口：HTTP/WebSocket（OneBot v11 子集）见 `API.md`，配置在 `onebot.json`。
+
 ## 架构
 
 - `src/qqours_main.js` — 唯一入口源码（引擎/登录/会话/消息/群/好友/资料全功能）
