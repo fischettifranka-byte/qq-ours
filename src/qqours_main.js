@@ -140,7 +140,21 @@ function attachGroupService() {
       onMemberListChange: () => {}, onMemberInfoChange: () => {}, onSearchMemberChange: () => {},
       onShutUpMemberListChanged: () => {}, onGroupDetailInfoUpdate: () => {}, onGroupExtListUpdate: () => {},
       onGroupBulletinUpdate: () => {}, onGroupAdminListUpdate: () => {}, onGroupMemberMaxNumUpdate: () => {},
-      onGroupSimpleInfoUpdate: () => {}, onJoinGroupResult: () => {}, onQuitGroupResult: () => {}
+      onGroupSimpleInfoUpdate: () => {}, onJoinGroupResult: () => {}, onQuitGroupResult: () => {},
+      onGroupNotifiesUpdated: (doubt, notifies) => {
+        for (const n of (notifies || [])) {
+          try {
+            const rec = { time: Date.now(), seq: n.seq, type: n.type, status: n.status, groupCode: n.group && n.group.groupCode, groupName: n.group && n.group.groupName, user1: n.user1, user2: n.user2, postscript: n.postscript || "" };
+            fs.appendFileSync(path.join(OUT, "group_notifies.jsonl"), JSON.stringify(rec) + "
+");
+            if ((n.type === 5 || n.type === 7) && (n.status === 1 || n.status === "1")) {
+              fs.appendFileSync(path.join(OUT, "pending_approvals.jsonl"), JSON.stringify(Object.assign({ kind: "group_join" }, rec)) + "
+");
+            }
+          } catch (e) {}
+        }
+      },
+      onGroupSingleScreenNotifies: () => {}
     };
     groupService.addKernelGroupListener(gl);
     log("group listener attached");
@@ -258,6 +272,12 @@ function startQueryQueue() {
           } else if (job.q === "buddy_approve") {
             await buddyService.approvalFriendRequest({ friendUid: job.friendUid, reqTime: String(job.reqTime), accept: !!job.accept });
             qlog({ q: "buddy_approve", time: Date.now(), friendUid: job.friendUid, accept: !!job.accept, done: true });
+          } else if (job.q === "group_req_approve") {
+            await groupService.operateSysNotify(false, { operateType: job.accept ? 1 : 2, targetMsg: { seq: String(job.seq), type: Number(job.type), groupCode: String(job.group), postscript: " " } });
+            qlog({ q: "group_req_approve", time: Date.now(), seq: String(job.seq), accept: !!job.accept, done: true });
+          } else if (job.q === "group_notify_count") {
+            const r = await groupService.getGroupNotifiesUnreadCount(false);
+            qlog({ q: "group_notify_count", time: Date.now(), res: r });
           } else if (job.q === "group_members") {
             const r = await groupService.getAllMemberList(String(job.groupCode), job.force === false ? false : true);
             const infos = (r && r.result && r.result.infos) || (r && r.infos);
