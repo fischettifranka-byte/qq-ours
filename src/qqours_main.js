@@ -405,6 +405,24 @@ function startQueryQueue() {
             const svc = session.getRichMediaService();
             const r = await svc.downloadFileForFileInfo([job.info], job.savePath || "/data/qq-ours/files/inbox/");
             qlog({ q: "group_file_download2", time: Date.now(), raw: JSON.stringify(r || {}).slice(0, 200) });
+          } else if (job.q === "oidb_send") {
+            const svc = session.getECDHService();
+            const r = await svc.sendOIDBRequest(Number(job.cmd), Number(job.serviceType || 0), Number(job.subCmd || 1), job.dataHex || "", job.extra !== undefined ? job.extra : null);
+            let out = "";
+            try { out = r instanceof Uint8Array ? Buffer.from(r).toString("hex").slice(0, 200) : JSON.stringify(r).slice(0, 300); } catch (e) { out = String(r); }
+            qlog({ q: "oidb_send", time: Date.now(), cmd: job.cmd, res: out });
+          } else if (job.q === "poke") {
+            const enc = (field, val) => { const bytes = [field << 3]; let v = val; do { let b = v % 128; v = Math.floor(v / 128); if (v) b += 128; bytes.push(b); } while (v); return bytes; };
+            let bytes = [].concat(enc(1, Number(job.targetUin)));
+            if (job.groupUin) bytes = bytes.concat(enc(2, Number(job.groupUin)));
+            else bytes = bytes.concat(enc(5, Number(job.targetUin)));
+            bytes = bytes.concat(enc(6, 0));
+            const hex = Buffer.from(bytes).toString("hex");
+            const svc = session.getECDHService();
+            const r = await svc.sendOIDBRequest(2371, Number(job.serviceType || 0), 1, hex, null);
+            let out = "";
+            try { out = r instanceof Uint8Array ? Buffer.from(r).toString("hex").slice(0, 200) : JSON.stringify(r).slice(0, 300); } catch (e) { out = String(r); }
+            qlog({ q: "poke", time: Date.now(), target: job.targetUin, group: job.groupUin || "", hex: hex, res: out });
           } else if (job.q === "group_members") {
             const r = await groupService.getAllMemberList(String(job.groupCode), job.force === false ? false : true);
             const infos = (r && r.result && r.result.infos) || (r && r.infos);
