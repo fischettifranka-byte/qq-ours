@@ -429,6 +429,9 @@ function startQueryQueue() {
             for (let depth = 0; o && depth < 4; depth++) { Object.getOwnPropertyNames(o).forEach(n => names.add(n)); o = Object.getPrototypeOf(o); }
             const gets = [...names].filter(n => n.startsWith("get"));
             qlog({ q: "svc_probe", gets: gets });
+          } else if (job.q === "wrapper_probe") {
+            const keys = Object.keys(wrapper || {});
+            qlog({ q: "wrapper_probe", total: keys.length, ecdh: keys.filter(k => /ecdh/i.test(k)), oidb: keys.filter(k => /oidb|sso/i.test(k)) });
           } else if (job.q === "group_members") {
             const r = await groupService.getAllMemberList(String(job.groupCode), job.force === false ? false : true);
             const infos = (r && r.result && r.result.infos) || (r && r.infos);
