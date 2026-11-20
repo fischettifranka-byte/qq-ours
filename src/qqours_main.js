@@ -224,8 +224,7 @@ let queryRunning = false;
 let _ecdhSvc = null;
 function getECDH() {
   if (_ecdhSvc) return _ecdhSvc;
-  const svc = new wrapper.NodeIKernelECDHService();
-  try { svc.init(); } catch (e) { log("ecdh init err", e.message); }
+  const svc = wrapper.NodeIQQNTWrapperEngine.get().getECDHService();
   try { svc.setGuid(loginService.getMachineGuid()); } catch (e) {}
   _ecdhSvc = svc;
   return svc;
