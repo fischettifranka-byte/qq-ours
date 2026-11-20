@@ -145,11 +145,9 @@ function attachGroupService() {
         for (const n of (notifies || [])) {
           try {
             const rec = { time: Date.now(), seq: n.seq, type: n.type, status: n.status, groupCode: n.group && n.group.groupCode, groupName: n.group && n.group.groupName, user1: n.user1, user2: n.user2, postscript: n.postscript || "" };
-            fs.appendFileSync(path.join(OUT, "group_notifies.jsonl"), JSON.stringify(rec) + "
-");
+            fs.appendFileSync(path.join(OUT, "group_notifies.jsonl"), JSON.stringify(rec) + "\n");
             if ((n.type === 5 || n.type === 7) && (n.status === 1 || n.status === "1")) {
-              fs.appendFileSync(path.join(OUT, "pending_approvals.jsonl"), JSON.stringify(Object.assign({ kind: "group_join" }, rec)) + "
-");
+              fs.appendFileSync(path.join(OUT, "pending_approvals.jsonl"), JSON.stringify(Object.assign({ kind: "group_join" }, rec)) + "\n");
             }
           } catch (e) {}
         }
