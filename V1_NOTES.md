@@ -70,3 +70,8 @@
 - 戳一戳传输层定位（重大进展，未打通）：ECDH 服务不在 session 上，挂在引擎对象 wrapper.NodeIQQNTWrapperEngine.get().getECDHService()；但从 JS 拿到的实例 cpp_impl 无效，sendOIDBRequest/sendSSORequest/sendOIDBRequestV2 一律秒回 result 1006506（本地拒绝，未出网）。wrapper 类直接 new 同样无效（init 断言 impl not valid）。
 - 真正的活口：MsgService.sendSsoCmdReqByContend(cmd, content) —— 内核有真实处理：空 content 回 1006504 发送异常；非空回 result 145 请求包解析失败。已试尽 content 形态：OIDB 信封/内层 protobuf 的 hex/base64/Uint8Array/Buffer/latin1 字符串、内层 JSON、信封 JSON、对象直传，均为 145。结论：content 须为内核 MSF 认的完整请求包格式（SSO 头+体），该格式由 QQ 自家 JS 包构建、细节在 major.node 字节码内，属专门逆向活；通用发送任务 msso_send/oidb_send/sso_send 已留在查询队列里，格式一旦破译即可复用。戳一戳发送队列任务 {type:"poke"} 已接好（走 ECDH 版 doPoke，待替换为打通后的通道）。
 - 搜人：UnifySearch 服务（session.getUnifySearchService().unifySearch({keyWords})）可直接 promise 返回聚合搜索结果（频道/小程序/游戏中心等分组），已接 unify_search 查询任务（输出分组摘要）。但陌生人/联系人分组不在其默认返回内；SearchListener 只有 onSearchGroupResult/onSearchFileKeywordsResult/onSearchMsgKeywordsResult 三个回调，内核层没有陌生人搜索结果通道。实际需求可用 profile_uin 按号查资料覆盖。
+
+## F1 群文件下载（2026-11-20 下午续啃，结论：结构性卡点）
+- 已试尽 RichMedia 全部下载入口：downloadFileForFileUuid / downloadFileForFileInfo / onlyDownloadFile 均返回 {} 且建任务但永不传输（等 25s+ 无落地，nt_flash_transfer.db 为 SQLCipher 加密读不了）；downloadFileForModelId 回 -1 file_model_info_vec empty（面板文件在本地消息库无 model 登记）；getGroupFileInfo 与 getRichMediaFileDir 的 promise 永不落定（勿再调，会挂住该次调用）。
+- getGroupSpace 正常（总 10G/已用 4.3G），先调它再下载也无济于事。transGroupFile 可用但那是转存微云（saveBusId 0 + 新 saveFilePath），非本地下载；文件助手列表只有 hello.txt，与群文件无关（FA 的 downloadFile 只管 FA 内文件）。
+- 判断：群文件传输引擎在真实客户端里由 UI 进程初始化，我们的壳路线没起这个模块——与戳一戳的包格式同属结构性卡点，非参数问题。实际替代路径已通：让对方把文件发到群里/私聊，走消息 downloadRichMedia 即可落地（A3 已验）。
