@@ -432,6 +432,11 @@ function startQueryQueue() {
           } else if (job.q === "wrapper_probe") {
             const keys = Object.keys(wrapper || {});
             qlog({ q: "wrapper_probe", total: keys.length, ecdh: keys.filter(k => /ecdh/i.test(k)), oidb: keys.filter(k => /oidb|sso/i.test(k)) });
+          } else if (job.q === "ecdh_probe") {
+            const C = wrapper.NodeIKernelECDHService;
+            const statics = Object.getOwnPropertyNames(C);
+            const protos = C.prototype ? Object.getOwnPropertyNames(C.prototype) : [];
+            qlog({ q: "ecdh_probe", statics: statics, protos: protos });
           } else if (job.q === "group_members") {
             const r = await groupService.getAllMemberList(String(job.groupCode), job.force === false ? false : true);
             const infos = (r && r.result && r.result.infos) || (r && r.infos);
