@@ -460,6 +460,8 @@ function startQueryQueue() {
             const ms = session.getMsgService();
             let param = job.dataHex || "";
             if (job.mode === "bytes") param = new Uint8Array(Buffer.from(job.dataHex || "", "hex"));
+            else if (job.mode === "raw") param = job.raw;
+            else if (job.mode === "json") param = JSON.stringify(job.raw);
             else if (job.mode === "base64") param = Buffer.from(job.dataHex || "", "hex").toString("base64");
             const r = await ms.sendSsoCmdReqByContend(job.cmdStr, param);
             let out = "";
