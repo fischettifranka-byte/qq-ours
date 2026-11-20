@@ -11,3 +11,7 @@ qr*.png
 *.tmp
 qrcode.url.txt
 node_modules/
+
+guild1.db*
+group_file_raw.json
+tools/*.node
