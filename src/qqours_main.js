@@ -183,7 +183,7 @@ function attachBuddyService() {
           try { existing = fs.readFileSync(pf, "utf8"); } catch (e) {}
           for (const r of reqs) {
             if (r.isDecide || r.isAgreed) continue;
-            const key = ""friendUid":"" + r.friendUid + """;
+            const key = String(r.friendUid);
             if (existing.includes(key)) continue;
             fs.appendFileSync(pf, JSON.stringify({ kind: "buddy_req", time: Date.now(), friendUid: r.friendUid, friendNick: r.friendNick || "", reqTime: r.reqTime, addSource: r.addSource }) + String.fromCharCode(10));
           }

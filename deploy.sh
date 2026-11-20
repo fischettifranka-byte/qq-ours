@@ -5,6 +5,7 @@
 #   ./deploy.sh restart   copy + restart
 set -e
 cd "$(dirname "$0")"
+node --check src/qqours_main.js
 cp src/qqours_main.js /opt/QQ/resources/app/qqours_main.js
 python3 - <<PYEOF
 import json
