@@ -298,6 +298,10 @@ function startQueryQueue() {
               const r = await groupService.addGroupEssence({ groupCode: String(job.group), msgRandom: parseInt(m0.msgRandom), msgSeq: parseInt(m0.msgSeq) });
               qlog({ q: "essence_add", time: Date.now(), group: String(job.group), msgId: String(job.msgId), res: r });
             }
+          } else if (job.q === "msg_probe") {
+            const md = await msgService.getMsgsIncludeSelf({ chatType: job.chatType || 2, guildId: "", peerUid: String(job.peer) }, String(job.msgId), 1, false);
+            const m0 = md && md.msgList && md.msgList[0];
+            qlog({ q: "msg_probe", found: !!m0, msgId: m0 && m0.msgId, msgSeq: m0 && m0.msgSeq, msgRandom: m0 && m0.msgRandom, senderUin: m0 && m0.senderUin });
           } else if (job.q === "group_members") {
             const r = await groupService.getAllMemberList(String(job.groupCode), job.force === false ? false : true);
             const infos = (r && r.result && r.result.infos) || (r && r.infos);

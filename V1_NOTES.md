@@ -25,3 +25,25 @@
 - Exposure audit: versions/qua/guid all genuine. Weak points: (1) HK datacenter IP — main residual risk, no cheap fix; (2) hostname was VPS-like "OLD_HOSTNAME" -> devName/hostName now set to "ubuntu" in qqours_main.js (2026-11-20); (3) login churn: 17 logins on 2026-11-20 from dev restarts — production must avoid restarts (watchdog only revives on real crashes).
 - Behavior: send queue is sequential/slow, human-paced; no bulk adds/sends. Keep it that way.
 - Maintenance: follow official Linux QQ version bumps (stale clients eventually get force-upgraded/kicked). QR+quick login only, never password login from the server.
+
+## D batch notes (2026-11-20)
+
+- Repo flow: edit src/qqours_main.js -> ./deploy.sh -> restart via ops -> git commit.
+  WARNING: in tool-call heredocs, a literal backslash-n inside JS strings gets
+  mangled by the transport layer into a real newline (SyntaxError). Build such
+  strings with chr(92) in the patch script instead.
+- Video send: rich path elementType 5; thumb at path with /Ori/ swapped to
+  /Thumb/, named <md5>_0.png; ffprobe for duration/size. Files uploaded into
+  /data/qq-ours/files must be chown qqrun or the endpoint hits EACCES.
+- Voice send: ffmpeg -> wav 24k mono -> silk-wasm (npm dep) encode -> elementType 4.
+- Forward: msgService.forwardMsg(msgIds, srcPeer, [dstPeer], []) merges multiple.
+- Poke: NOT a kernel service; NapCat uses its own packet subsystem. Deferred.
+- Bulletin: TipOffService.getPskey(["qun.qq.com"], true) -> domainPskeyMap,
+  then groupService.publishGroupBulletin(group, pskey, {text: encodeURI(t),
+  oldFeedsId: "", pinned: 0, confirmRequired: 0}). Verified result 0.
+- Essence add: params verified correct (msgSeq/msgRandom probed), but the
+  server returns errorCode 11004 "message not supported" for the endpoint
+  account own fresh text message. Wired; retest on a human message later.
+  Essence list call resolves oddly (no qlog line); low priority.
+- Group files: FileAssistantService is the file assistant, not group files;
+  group file list likely needs the qun web API. Not wired yet.
