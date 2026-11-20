@@ -118,6 +118,8 @@ function attachMsgService() {
       onRecvMsg: (msgs) => { for (const m of msgs || []) recordMsg("recv", m); },
       onGroupFileInfoUpdate: (arg) => { try {
         const items = (arg && arg.item) || [];
+        const fileInfos = items.filter(x => x.fileInfo).map(x => x.fileInfo);
+        if (fileInfos.length) { try { fs.writeFileSync(path.join(OUT, "group_file_raw.json"), JSON.stringify(fileInfos, null, 1)); } catch (e) {} }
         qlog({ q: "group_files_event", time: Date.now(), isEnd: !!(arg && arg.isEnd), items: items.map(it => it.folderInfo ? { kind: "folder", name: it.folderInfo.folderName, id: it.folderInfo.folderId, files: it.folderInfo.totalFileCount } : it.fileInfo ? { kind: "file", name: it.fileInfo.fileName, size: it.fileInfo.fileSize, id: it.fileInfo.fileId, uuid: it.fileInfo.fileUuid, uploader: it.fileInfo.uploaderUin, busId: it.fileInfo.busId } : { kind: "?" }) });
       } catch (e) {} },
       onMsgInfoListUpdate: (msgs) => { for (const m of msgs || []) recordMsg("update", m); },
@@ -393,6 +395,12 @@ function startQueryQueue() {
             const svc = session.getRichMediaService();
             await svc.getGroupFileList(String(job.group), { sortType: 1, fileCount: Number(job.count || 50), startIndex: 0, sortOrder: 2, showOnlinedocFolder: 0 });
             qlog({ q: "group_files", time: Date.now(), group: String(job.group), note: "requested; results arrive as group_files_event" });
+          } else if (job.q === "group_file_download") {
+            const svc = session.getRichMediaService();
+            const peer = { chatType: 2, peerUid: String(job.group), guildId: "" };
+            const info = { fileId: job.fileId, fileName: job.fileName || "", fileSize: String(job.fileSize || "0"), fileModelId: String(job.fileModelId || "0") };
+            const r = await svc.downloadFileForFileUuid(peer, job.fileId, [info]);
+            qlog({ q: "group_file_download", time: Date.now(), group: String(job.group), fileId: job.fileId, raw: JSON.stringify(r || {}).slice(0, 300) });
           } else if (job.q === "group_members") {
             const r = await groupService.getAllMemberList(String(job.groupCode), job.force === false ? false : true);
             const infos = (r && r.result && r.result.infos) || (r && r.infos);
