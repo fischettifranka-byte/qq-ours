@@ -299,7 +299,30 @@ function startSendQueue() {
             continue;
           }
           let elements, label;
-          if (job.type === "face") {
+          if (job.type === "video") {
+            const buf = fs.readFileSync(job.path);
+            const md5 = require("crypto").createHash("md5").update(buf).digest("hex");
+            const fileName = path.basename(job.path);
+            let mediaPath = job.path;
+            mediaPath = msgService.getRichMediaFilePathForGuild({ md5HexStr: md5, fileName: fileName, elementType: 5, elementSubType: 0, thumbSize: 0, needCreate: true, downloadType: 1, file_uuid: "" });
+            if (mediaPath && mediaPath !== job.path) fs.copyFileSync(job.path, mediaPath);
+            const { execFileSync } = require("child_process");
+            let dur = 10, vw = 720, vh = 1280;
+            try {
+              const probe = JSON.parse(execFileSync("ffprobe", ["-v", "quiet", "-print_format", "json", "-show_format", "-show_streams", job.path], { encoding: "utf8" }));
+              dur = Math.max(1, Math.round(parseFloat(probe.format.duration || 10)));
+              const vs = (probe.streams || []).find(x => x.codec_type === "video");
+              if (vs) { vw = vs.width || vw; vh = vs.height || vh; }
+            } catch (e) { log("ffprobe err", e.message); }
+            const thumbDirPath = path.dirname(mediaPath.replace("/Ori/", "/Thumb/"));
+            fs.mkdirSync(thumbDirPath, { recursive: true });
+            const thumbPath = path.join(thumbDirPath, md5 + "_0.png");
+            try { execFileSync("ffmpeg", ["-y", "-v", "error", "-ss", "1", "-i", job.path, "-frames:v", "1", thumbPath]); } catch (e) { log("ffmpeg thumb err", e.message); }
+            const thumbBuf = fs.readFileSync(thumbPath);
+            const thumbMd5 = require("crypto").createHash("md5").update(thumbBuf).digest("hex");
+            elements = [{ elementType: 5, elementId: "", videoElement: { fileName: fileName, filePath: mediaPath, videoMd5: md5, thumbMd5: thumbMd5, fileTime: dur, thumbPath: new Map([[0, thumbPath]]), thumbSize: thumbBuf.length, thumbWidth: vw, thumbHeight: vh, fileSize: String(buf.length) } }];
+            label = "video:" + fileName;
+          } else if (job.type === "face") {
             elements = [{ elementType: 6, elementId: "", faceElement: { faceIndex: Number(job.faceIndex || 14), faceType: 1, faceText: job.faceText || "/微笑", sourceType: 1 } }];
             label = "face:" + (job.faceIndex || 14);
           } else if (job.type === "file") {
