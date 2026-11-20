@@ -456,6 +456,15 @@ function startQueryQueue() {
             let out = "";
             try { out = r instanceof Uint8Array ? Buffer.from(r).toString("hex").slice(0, 200) : JSON.stringify(r).slice(0, 300); } catch (e) { out = String(r); }
             qlog({ q: "oidb_v2", time: Date.now(), cmd: job.cmd, res: out });
+          } else if (job.q === "msso_send") {
+            const ms = session.getMsgService();
+            let param = job.dataHex || "";
+            if (job.mode === "bytes") param = new Uint8Array(Buffer.from(job.dataHex || "", "hex"));
+            else if (job.mode === "base64") param = Buffer.from(job.dataHex || "", "hex").toString("base64");
+            const r = await ms.sendSsoCmdReqByContend(job.cmdStr, param);
+            let out = "";
+            try { out = r instanceof Uint8Array ? Buffer.from(r).toString("hex").slice(0, 300) : JSON.stringify(r).slice(0, 300); } catch (e) { out = String(r); }
+            qlog({ q: "msso_send", time: Date.now(), cmdStr: job.cmdStr, mode: job.mode || "hex", res: out });
           } else if (job.q === "group_members") {
             const r = await groupService.getAllMemberList(String(job.groupCode), job.force === false ? false : true);
             const infos = (r && r.result && r.result.infos) || (r && r.infos);
