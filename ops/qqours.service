@@ -1,0 +1,17 @@
+[Unit]
+Description=qqours endpoint (Linux QQ desktop client)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+# QQ 自会 detach，用 oneshot + RemainAfterExit 表达"已启动"；存活由 watchdog 兜底
+Type=oneshot
+RemainAfterExit=yes
+Environment=TZ=Asia/Shanghai
+Environment=QQ_DEV_NAME=ubuntu-desktop
+ExecStart=/data/qq-ours/ops/start.sh
+ExecStop=/data/qq-ours/ops/stop.sh
+TimeoutStopSec=60
+
+[Install]
+WantedBy=multi-user.target

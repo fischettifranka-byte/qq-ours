@@ -86,3 +86,47 @@
 - 19:02 应用户要求在全新扫码登录态上复测：hook.json 于进程启动时装载（initHook -> true），msso_send 以 mode=buffer 发送 OidbSvcTrpcTcp.0xED3_1 信封（isReserved=1，内层 pokePayload(OWNER_UIN) C2C）——返回 {result:0, errMsg:"success", rspbuffer 非空（含 trpc-sso 与账号号）}。戳一戳打通。
 - 此前四次 150「本请求无权限」均发生在 12:39 被踢后恢复的会话上，该会话当日 17:55 又静默失效——判断 150 是那条已降级/被标记会话的权限状态，不是命令本身被封。教训：包格式与通道自始正确，权限随会话状态变。
 - 待办：发送队列 {type:"poke"} 仍走已死的 ECDH doPoke，应改走 msso_send 信封路径（需改码+重启，等用户点头再动，避免无谓重启）。
+
+## G 批（2026-11-21 凌晨）— 稳定性加固 + 登录免扫码 + 环境伪装
+
+### 事故背景
+- 16:20 起机器反复重启，16:25 全部端口 refused→timeout，外部四节点探测确认机房侧故障
+  （极点云 香港5区 CN2 流量云 整节点不可达，管理在群里回「给机房反馈了」）。与本地配置无关。
+- 恢复后 status=phase:qrcode：进程活着但没登录，旧 watchdog 只查进程存在，永远不会自愈。
+
+### P0（已合入 src/qqours_main.js）
+- 队列改为 append-only + 字节游标消费（readNewLines）。原来 readFileSync 后 writeFileSync("")
+  非原子，读取与清空之间写入的行静默丢失。半行走下次，文件被轮转时游标归零。
+- 发送队列任何 job.path 先过 safePath()，必须落在 /data/qq-ours/files 子树，否则拒绝 + deadLetter。
+  堵掉「能写队列 = 能发任意文件」的路径穿越。
+- send/query 失败写 dead_letter.jsonl，不再只 log 一句。
+
+### P1（登录免扫码）
+- 启动阶梯：quickLoginWithUin ×3（每次等 30s）→ 第 2 次失败自动 restore_login.sh 回滚最近快照
+  → 三次都失败才 status=need_scan + 出二维码。
+- 登录成功后 45s 自动 backup_login.sh 快照（nt_data + global，25MB，保留 3 份）。
+- ops/stop.sh 优雅停止（SIGTERM→40s→KILL），退出前再拍一次快照。强杀是票据损坏的主因。
+- systemd unit qqours.service（oneshot + RemainAfterExit）；存活由 watchdog 兜底
+  （RELAUNCH_ON_DEAD 标记），StartLimit 防止崩溃循环反复制造登录记录。
+- watchdog 只看不抢：process_gone / stuck_qrcode(>10min) / kicked / need_scan → alerts.jsonl。
+
+### 环境伪装（服务端可见的部分）
+- hostname OLD_HOSTNAME → ubuntu-desktop；loginService.hostName 与 deviceInfo.devName 同步；
+- 时区 UTC → Asia/Shanghai；LANG/LC_ALL → zh_CN.UTF-8；Xvfb 1280x1024 → 1920x1080@96dpi；
+- deviceInfo vendorName Linux → LENOVO，vendorOsName Linux → Ubuntu；
+- 新增 presenceLoop：在线/离开/忙碌/勿扰按本地时间漂移（夜间以离开为主），8–30 分钟随机一次；
+- qqrun 家目录补齐 Desktop/Downloads/Pictures 等，避免像服务账号。
+
+### 登录态失效的真相
+- 2026-11-21 00:34 实测 quickLoginWithUin 三次全返回 result=3「登录态已失效，请重新登录」，
+  说明票据已被服务端作废（12:37 那次 KICKED OFFLINE 的后遗症），本地任何回滚都无效 → 必须扫一次。
+- 00:37 扫码成功，00:38 首份快照落盘，00:39 presenceLoop 生效（presence -> 60）。
+  之后的重启应走快登，不再需要扫码，前提是：不 pkill、不在短时间内反复重启。
+
+### 订阅节点评估（用户提供，51 个节点）
+- 22 个 Cloudflare 前置 vless + 20 个微软云(AS8075) tuic = 82% 是机场重灾区，出口 IP 高度共享，
+  挂 QQ 比香港机房直连更危险；TCP 实测这些节点 91–270ms。
+- 非 CF/非微软云的只有 7 个落地：英国 AS204044 Packet Star ×2、日本 AS137409 GSL ×2、
+  美国 AS53767 iCastCenter、美国 AS14315 1GSERVERS、美国 AS62610 Zenlayer。
+- 结论：没有一个适合挂 QQ（全 IDC，且跨国 IP 跳变本身触发异地保护）。
+  真正合适的只有国内家宽/移动 IP（自家宽带反向隧道或家宽 NAT），且切换要一次性固定，不反复漂。

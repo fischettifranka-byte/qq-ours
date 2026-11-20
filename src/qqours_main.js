@@ -6,12 +6,53 @@ const path = require("path");
 const os = require("os");
 const OUT = "/data/qq-ours";
 const LOGF = path.join(OUT, "boot.log");
+const DEV_NAME = process.env.QQ_DEV_NAME || "ubuntu-desktop";
+const FILES_BASE = path.join(OUT, "files");
+const DEAD_LETTER = path.join(OUT, "dead_letter.jsonl");
 function log(...a) {
   const s = a.map(x => { try { return typeof x === "string" ? x : JSON.stringify(x); } catch (e) { return String(x); } }).join(" ");
   try { fs.appendFileSync(LOGF, "[" + new Date().toISOString() + "] " + s + "\n"); } catch (e) {}
   console.log(s);
 }
 function status(obj) { try { fs.writeFileSync(path.join(OUT, "status.json"), JSON.stringify(obj, null, 2)); } catch (e) {} }
+
+// ---- P0: queue cursor / path whitelist / dead letter ----
+const queueCursors = new Map();
+// append-only queue: consume by byte cursor, never truncate, keep half line for next round
+function readNewLines(qf) {
+  var st = queueCursors.get(qf);
+  if (!st) { st = { off: 0 }; queueCursors.set(qf, st); }
+  var fd;
+  try { fd = fs.openSync(qf, "r"); } catch (e) { return []; }
+  try {
+    var size = fs.fstatSync(fd).size;
+    if (size < st.off) st.off = 0;
+    if (size === st.off) return [];
+    var buf = Buffer.alloc(size - st.off);
+    var got = 0;
+    try { got = fs.readSync(fd, buf, 0, buf.length, st.off); } catch (e) { return []; }
+    if (!got) return [];
+    var nl = buf.lastIndexOf(String.fromCharCode(10));
+    if (nl === -1) return [];
+    var chunk = buf.slice(0, nl + 1);
+    st.off += chunk.length;
+    return chunk.toString("utf8").split(String.fromCharCode(10)).filter(function (x) { return x.trim(); });
+  } finally { try { fs.closeSync(fd); } catch (e) {} }
+}
+function safePath(p) {
+  try {
+    if (!p) return null;
+    var rp = fs.realpathSync(String(p));
+    var base = fs.realpathSync(FILES_BASE);
+    if (rp === base) return null;
+    return rp.indexOf(base + path.sep) === 0 ? rp : null;
+  } catch (e) { return null; }
+}
+function deadLetter(kind, job, err) {
+  try {
+    fs.appendFileSync(DEAD_LETTER, JSON.stringify({ at: Date.now(), kind: kind, job: job, err: String((err && err.message) || err) }) + String.fromCharCode(10));
+  } catch (e) {}
+}
 process.on("uncaughtException", e => log("UNCAUGHT", (e && e.stack) || String(e)));
 process.on("unhandledRejection", e => log("UNREJECT", (e && e.stack) || String(e)));
 
@@ -69,7 +110,7 @@ log("engine inited");
 const loginService = wrapper.NodeIKernelLoginService.get();
 loginService.initConfig({
   machineId: "", appid: appid, platVer: os.release(), commonPath: dataPathGlobal,
-  clientVer: clientVer, hostName: "ubuntu", externalVersion: false
+  clientVer: clientVer, hostName: DEV_NAME, externalVersion: false
 });
 log("login service inited");
 
@@ -141,7 +182,21 @@ function attachMsgService() {
     } catch (e) { log("search listener err", e.message); }
     status({ phase: "online", uin: selfInfo && selfInfo.uin, uid: selfInfo && selfInfo.uid });
     startSendQueue();
+    presenceLoop();
   } catch (e) { log("attachMsgService err", (e && e.stack) || String(e)); }
+}
+// 存在感：按本地时间在 在线/离开/忙碌/勿扰 之间漂移，夜间以离开为主
+function presenceLoop() {
+  const tick = () => {
+    const h = new Date().getHours();
+    const night = h >= 1 && h < 8;
+    const pool = night ? [30, 30, 30, 10] : [10, 10, 10, 30, 50, 60];
+    const val = pool[Math.floor(Math.random() * pool.length)];
+    try { if (msgService && msgService.setStatus) msgService.setStatus({ status: val, extStatus: 0, batteryStatus: 0 }); } catch (e) {}
+    log("presence ->", val);
+    setTimeout(tick, (8 + Math.random() * 22) * 60 * 1000);
+  };
+  setTimeout(tick, 60000 + Math.random() * 60000);
 }
 let groupService = null;
 function qlog(obj) { try { fs.appendFileSync(path.join(OUT, "query_results.jsonl"), JSON.stringify(obj) + "\n"); } catch (e) {} log("QUERY", obj.q, obj.error || (obj.groups ? obj.groups.length + " groups" : obj.count != null ? obj.count + " members" : "ok")); }
@@ -296,10 +351,8 @@ function startQueryQueue() {
   const qf = path.join(OUT, "query_queue.jsonl");
   setInterval(async () => {
     try {
-      if (!fs.existsSync(qf)) return;
-      const lines = fs.readFileSync(qf, "utf8").split("\n").filter(x => x.trim());
+      const lines = readNewLines(qf);
       if (!lines.length) return;
-      fs.writeFileSync(qf, "");
       for (const line of lines) {
         try {
           const job = JSON.parse(line);
@@ -568,7 +621,7 @@ function startQueryQueue() {
           } else {
             qlog({ q: job.q || "?", error: "unknown query" });
           }
-        } catch (e) { qlog({ q: "error", error: e.message, line: line }); }
+        } catch (e) { qlog({ q: "error", error: e.message, line: line }); deadLetter("query", { raw: line }, e); }
       }
     } catch (e) { log("query queue err", e.message); }
   }, 2000);
@@ -584,13 +637,16 @@ function startSendQueue() {
   const qf = path.join(OUT, "send_queue.jsonl");
   setInterval(async () => {
     try {
-      if (!fs.existsSync(qf)) return;
-      const lines = fs.readFileSync(qf, "utf8").split("\n").filter(x => x.trim());
+      const lines = readNewLines(qf);
       if (!lines.length) return;
-      fs.writeFileSync(qf, "");
       for (const line of lines) {
         try {
           const job = JSON.parse(line);
+          if (job.path !== undefined) {
+            const safe = safePath(job.path);
+            if (!safe) { deadLetter("send", job, "path outside " + FILES_BASE); log("send job rejected: path outside base", job.path); continue; }
+            job.path = safe;
+          }
           const peer = { chatType: job.chatType, peerUid: job.peerUid, guildId: job.guildId || "" };
           if (job.type === "forward") {
             const src = { chatType: job.fromChatType, peerUid: job.fromPeerUid, guildId: "" };
@@ -705,7 +761,7 @@ function startSendQueue() {
           }
           const res = await msgService.sendMsg("0", peer, elements, new Map());
           log("SEND ->", JSON.stringify(peer), label, "res:", JSON.stringify(res));
-        } catch (e) { log("send job err", e.message, line); }
+        } catch (e) { log("send job err", e.message, line); deadLetter("send", { raw: line }, e); }
       }
     } catch (e) { log("send queue err", e.message); }
   }, 1500);
@@ -729,7 +785,7 @@ async function initSession(res) {
       platform: 5, platVer: os.release(), appid: appid,
       rdeliveryConfig: { appKey: "", systemId: 0, appId: "", logicEnvironment: "", platform: 5, language: "", sdkVersion: "", userId: "", appVersion: "", osVersion: "", bundleId: "", serverUrl: "", fixedAfterHitKeys: [""] },
       defaultFileDownloadPath: downloadPath,
-      deviceInfo: { guid: guid, buildVer: clientVer, localId: 2052, devName: "ubuntu", devType: "Linux", vendorName: "", osVer: os.release(), vendorOsName: "Linux", setMute: false, vendorType: 0 },
+      deviceInfo: { guid: guid, buildVer: clientVer, localId: 2052, devName: DEV_NAME, devType: "Linux", vendorName: "LENOVO", osVer: os.release(), vendorOsName: "Ubuntu", setMute: false, vendorType: 0 },
       deviceConfig: "{\"appearance\":{\"isSplitViewMode\":true},\"msg\":{}}"
     };
     const sessionListener = { onOpentelemetryInit: (info) => { log("opentelemetry init", JSON.stringify(info)); if (info && info.is_init) { status({ phase: "session_ok", uin: cfg.selfUin, uid: cfg.selfUid }); attachMsgService(); } } };
@@ -754,7 +810,8 @@ const loginListener = {
   },
   onQRCodeLoginPollingStarted: () => log("qr polling started"),
   onQRCodeSessionUserScaned: () => { log("QR SCANNED"); status({ phase: "scanned" }); },
-  onQRCodeLoginSucceed: (res) => { if (loginDone) return; loginDone = true; selfInfo = res; log("LOGIN SUCCEED", JSON.stringify(res)); status({ phase: "login_succeed", result: res }); initSession(res); },
+  onQRCodeLoginSucceed: (res) => { if (loginDone) return; loginDone = true; selfInfo = res; log("LOGIN SUCCEED", JSON.stringify(res)); status({ phase: "login_succeed", result: res }); initSession(res);
+    setTimeout(() => { try { require("child_process").execFileSync("/bin/bash", ["/data/qq-ours/ops/backup_login.sh"], { encoding: "utf8" }); log("login snapshot saved"); } catch (e) { log("snapshot err", e.message); } }, 45000); },
   onQRCodeSessionFailed: (t, c) => { log("qr session failed", t, c); if (!loginDone) setTimeout(() => { try { log("refresh qr ->", loginService.getQRCodePicture()); } catch (e) { log("refresh err", e.message); } }, 1000); },
   onLoginFailed: (...a) => log("login failed", ...a),
   onLogoutSucceed: () => log("logout ok"),
@@ -779,16 +836,32 @@ log("login listener added");
     await new Promise(r => setTimeout(r, 500));
   }
   log("msf ready");
-  const quick = list && list.LocalLoginInfoList && list.LocalLoginInfoList.find(x => x.isQuickLogin);
-  if (quick) {
-    log("try quick login uin", quick.uin);
-    try {
-      const r = await loginService.quickLoginWithUin(String(quick.uin));
-      log("quickLoginWithUin ->", JSON.stringify(r).slice(0, 200));
-    } catch (e) { log("quick login call err", e.message); }
-    setTimeout(() => { if (!loginDone) { log("quick login timeout, fallback to QR"); try { loginService.getQRCodePicture(); } catch (e) {} } }, 20000);
+  const ql = (list && list.LocalLoginInfoList) || [];
+  const cand = ql.find(x => x.isQuickLogin) || ql[0];
+  if (cand) {
+    log("quick login candidate uin", cand.uin, "isQuickLogin", !!cand.isQuickLogin);
+    for (let attempt = 1; attempt <= 3 && !loginDone; attempt++) {
+      try {
+        const r = await loginService.quickLoginWithUin(String(cand.uin));
+        log("quickLoginWithUin attempt", attempt, "->", JSON.stringify(r).slice(0, 200));
+      } catch (e) { log("quick login call err", e.message); }
+      for (let w = 0; w < 30 && !loginDone; w++) await new Promise(r => setTimeout(r, 1000));
+      if (loginDone) break;
+      log("quick login attempt", attempt, "no session");
+      if (attempt === 2) {
+        try {
+          const out = require("child_process").execFileSync("/bin/bash", ["/data/qq-ours/ops/restore_login.sh"], { encoding: "utf8" });
+          log("login snapshot restore:", String(out).trim().slice(0, 200));
+        } catch (e) { log("restore err", e.message); }
+      }
+      await new Promise(r => setTimeout(r, 3000 + Math.random() * 4000));
+    }
   } else {
-    log("no quick login entry, request QR");
-    loginService.getQRCodePicture();
+    log("no local login record at all");
+  }
+  if (!loginDone) {
+    log("quick login exhausted -> need human scan");
+    status({ phase: "need_scan", at: Date.now() });
+    try { loginService.getQRCodePicture(); } catch (e) { log("qr err", e.message); }
   }
 })();

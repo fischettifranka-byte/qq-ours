@@ -15,3 +15,11 @@ node_modules/
 guild1.db*
 group_file_raw.json
 tools/*.node
+
+# runtime login state / markers (25MB per snapshot, never commit)
+login_snapshots/
+RELAUNCH_ON_DEAD
+alerts.jsonl
+dead_letter.jsonl
+*.p1bak.*
+*.bak.*
