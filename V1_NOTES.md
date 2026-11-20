@@ -81,3 +81,8 @@
 - 按正解实测仍回 145 请求包解析失败。结合本机内核返回形状是 {result,errMsg,rsp}（与 qwqnt/NapCat 预期的 {rspbuffer} 不同），判断 9.9.37/3.2.35 这版改了 JS 发送通道的内部契约；两个同路项目发包前都要求 napi2native 原生 hook 就绪，社区对这版（SnowCat 文）也是走原生 hook。
 - napi2native.linux.x64.node 现成模块在参考源码里有（23MB），但其偏移表 napi2native.json 共 124 个版本、无 3.2.35-54395（Linux）——本版 send/recv 偏移无人发布，需对 wrapper.node 做特征扫描逆向，属专场工作。
 - 事故：同日 12:39 账号被踢下线（登录已失效），主因疑为当日功能调试重启过频（登录 churn）。已修潜伏 bug：onKickedOffLine 误用未定义的 writeStatus（应为 status），此前被踢不会更新 status.json、健康巡检也报不出（commit f68485b）。用户已重新扫码恢复在线。
+
+## F2 终局更正（2026-11-20 19:11）
+- 19:02 应用户要求在全新扫码登录态上复测：hook.json 于进程启动时装载（initHook -> true），msso_send 以 mode=buffer 发送 OidbSvcTrpcTcp.0xED3_1 信封（isReserved=1，内层 pokePayload(OWNER_UIN) C2C）——返回 {result:0, errMsg:"success", rspbuffer 非空（含 trpc-sso 与账号号）}。戳一戳打通。
+- 此前四次 150「本请求无权限」均发生在 12:39 被踢后恢复的会话上，该会话当日 17:55 又静默失效——判断 150 是那条已降级/被标记会话的权限状态，不是命令本身被封。教训：包格式与通道自始正确，权限随会话状态变。
+- 待办：发送队列 {type:"poke"} 仍走已死的 ECDH doPoke，应改走 msso_send 信封路径（需改码+重启，等用户点头再动，避免无谓重启）。
