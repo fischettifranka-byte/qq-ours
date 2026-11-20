@@ -116,7 +116,10 @@ function attachMsgService() {
     msgService = session.getMsgService();
     const listener = {
       onRecvMsg: (msgs) => { for (const m of msgs || []) recordMsg("recv", m); },
-      onGroupFileInfoUpdate: (arg) => { try { qlog({ q: "group_files_event", time: Date.now(), raw: JSON.stringify(arg || {}).slice(0, 2500) }); } catch (e) {} },
+      onGroupFileInfoUpdate: (arg) => { try {
+        const items = (arg && arg.item) || [];
+        qlog({ q: "group_files_event", time: Date.now(), isEnd: !!(arg && arg.isEnd), items: items.map(it => it.folderInfo ? { kind: "folder", name: it.folderInfo.folderName, id: it.folderInfo.folderId, files: it.folderInfo.totalFileCount } : it.fileInfo ? { kind: "file", name: it.fileInfo.fileName, size: it.fileInfo.fileSize, id: it.fileInfo.fileId, uuid: it.fileInfo.fileUuid, uploader: it.fileInfo.uploaderUin, busId: it.fileInfo.busId } : { kind: "?" }) });
+      } catch (e) {} },
       onMsgInfoListUpdate: (msgs) => { for (const m of msgs || []) recordMsg("update", m); },
       onRecvS2CMsg: (msgs) => { for (const m of msgs || []) recordMsg("s2c", m); },
       onRichMediaDownloadComplete: (arg) => { try { log("DL complete", JSON.stringify(arg)); if (arg && arg.filePath && fs.existsSync(arg.filePath)) { const dest = path.join(OUT, "files", "inbox"); fs.mkdirSync(dest, { recursive: true }); const d = path.join(dest, path.basename(arg.filePath)); fs.copyFileSync(arg.filePath, d); log("DL saved to", d); } } catch (e) { log("dl cb err", e.message); } },
