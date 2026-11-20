@@ -299,7 +299,24 @@ function startSendQueue() {
             continue;
           }
           let elements, label;
-          if (job.type === "video") {
+          if (job.type === "ptt") {
+            const { execFileSync } = require("child_process");
+            const stamp = Date.now();
+            const tmpWav = "/tmp/qqours_ptt_" + stamp + ".wav";
+            execFileSync("ffmpeg", ["-y", "-v", "error", "-i", job.path, "-ar", "24000", "-ac", "1", tmpWav]);
+            const silk = require("/data/qq-ours/node_modules/silk-wasm");
+            const enc = await silk.encode(fs.readFileSync(tmpWav), 0);
+            const silkBuf = Buffer.from(enc.data);
+            const duration = Math.max(1, Math.round(enc.duration / 1000));
+            const tmpSilk = "/tmp/qqours_ptt_" + stamp + ".silk";
+            fs.writeFileSync(tmpSilk, silkBuf);
+            const md5 = require("crypto").createHash("md5").update(silkBuf).digest("hex");
+            const silkName = path.basename(tmpSilk);
+            let mediaPath = msgService.getRichMediaFilePathForGuild({ md5HexStr: md5, fileName: silkName, elementType: 4, elementSubType: 0, thumbSize: 0, needCreate: true, downloadType: 1, file_uuid: "" });
+            if (mediaPath && mediaPath !== tmpSilk) fs.copyFileSync(tmpSilk, mediaPath);
+            elements = [{ elementType: 4, elementId: "", pttElement: { fileName: silkName, filePath: mediaPath, md5HexStr: md5, fileSize: String(silkBuf.length), duration: duration, formatType: 1, voiceType: 1, voiceChangeType: 0, canConvert2Text: true, waveAmplitudes: [0, 18, 9, 23, 16, 17, 16, 15, 44, 17, 24, 20, 14, 15, 17], fileSubId: "", playState: 1, autoConvertText: 0, storeID: 0, otherBusinessInfo: { aiVoiceType: 0 } } }];
+            label = "ptt:" + duration + "s";
+          } else if (job.type === "video") {
             const buf = fs.readFileSync(job.path);
             const md5 = require("crypto").createHash("md5").update(buf).digest("hex");
             const fileName = path.basename(job.path);

@@ -10,3 +10,4 @@ __pycache__/
 qr*.png
 *.tmp
 qrcode.url.txt
+node_modules/
