@@ -1,0 +1,66 @@
+{
+  "name": "QQ",
+  "version": "3.2.35-54395",
+  "private": true,
+  "description": "QQ",
+  "productName": "QQ",
+  "author": {
+    "name": "Tencent",
+    "email": "QQ-Team@tencent.com"
+  },
+  "homepage": "https://im.qq.com",
+  "sideEffects": true,
+  "bin": {
+    "qd": "externals/devtools/cli/index.js"
+  },
+  "appid": {
+    "win32": "537391474",
+    "darwin": "537391499",
+    "linux": "537391511",
+    "ohos": "5373141859"
+  },
+  "main": "./application.asar/app_launcher/index.js",
+  "peerDependenciesMeta": {
+    "*": {
+      "optional": true
+    }
+  },
+  "pnpm": {
+    "patchedDependencies": {
+      "@vue/runtime-dom@3.5.12": "patches/@vue__runtime-dom@3.5.12.patch",
+      "@swc/helpers@0.5.3": "patches/@swc__helpers@0.5.3.patch",
+      "vuex@4.1.0": "patches/vuex@4.1.0.patch",
+      "typescript-parser@2.6.1": "patches/typescript-parser@2.6.1.patch",
+      "@tencent/qqplay-downloadsdk": "patches/@tencent__qqplay-downloadsdk.patch",
+      "@tencent/universal-report@4.5.4": "patches/@tencent__universal-report@4.5.4.patch",
+      "typescript@7.0.2": "patches/typescript@7.0.2.patch"
+    },
+    "packageExtensions": {
+      "qute": {
+        "dependencies": {},
+        "devDependencies": {}
+      }
+    },
+    "overrides": {
+      "@types/react": "-",
+      "@types/react-dom": "-",
+      "@tencent/yuanbao-react-markdown>@types/hast": "-",
+      "@tencent/yuanbao-react-markdown>devlop": "-",
+      "@tencent/yuanbao-react-markdown>hast-util-to-jsx-runtime": "-",
+      "@tencent/yuanbao-react-markdown>html-url-attributes": "-",
+      "@tencent/yuanbao-react-markdown>mdast-util-to-hast": "-",
+      "@tencent/yuanbao-react-markdown>rehype-parse": "-",
+      "@tencent/yuanbao-react-markdown>rehype-stringify": "-",
+      "@tencent/yuanbao-react-markdown>remark-parse": "-",
+      "@tencent/yuanbao-react-markdown>remark-rehype": "-",
+      "@tencent/yuanbao-react-markdown>unified": "-",
+      "@tencent/yuanbao-react-markdown>unist-util-visit": "-",
+      "@tencent/yuanbao-react-markdown>vfile": "-",
+      "@types/d3-dispatch": "3.0.6"
+    }
+  },
+  "buildVersion": "54395",
+  "platform": "linux",
+  "eleArch": "x64",
+  "linuxFormat": "deb"
+}

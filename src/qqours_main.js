@@ -1,0 +1,434 @@
+// qqours v1 - our own QQ protocol endpoint (runs as QQ Electron main process)
+// v0: wrapper load, engine/login/session init, QR login (+auto refresh), quick login
+// v1: message receive listener -> inbox.jsonl ; send queue file -> sendMsg
+const fs = require("fs");
+const path = require("path");
+const os = require("os");
+const OUT = "/data/qq-ours";
+const LOGF = path.join(OUT, "boot.log");
+function log(...a) {
+  const s = a.map(x => { try { return typeof x === "string" ? x : JSON.stringify(x); } catch (e) { return String(x); } }).join(" ");
+  try { fs.appendFileSync(LOGF, "[" + new Date().toISOString() + "] " + s + "\n"); } catch (e) {}
+  console.log(s);
+}
+function status(obj) { try { fs.writeFileSync(path.join(OUT, "status.json"), JSON.stringify(obj, null, 2)); } catch (e) {} }
+process.on("uncaughtException", e => log("UNCAUGHT", (e && e.stack) || String(e)));
+process.on("unhandledRejection", e => log("UNREJECT", (e && e.stack) || String(e)));
+
+log("=== qqours v1 main start pid", process.pid);
+let wrapper;
+try {
+  const m = { exports: {} };
+  process.dlopen(m, "/opt/QQ/resources/app/wrapper.node");
+  wrapper = m.exports;
+  log("wrapper loaded ok");
+} catch (e) {
+  log("wrapper dlopen FAIL", e.message);
+  status({ phase: "wrapper_fail", error: e.message });
+  throw e;
+}
+
+const globalAdapter = {
+  onLog: () => {}, onGetSrvCalTime: () => {}, onShowErrUITips: (...a) => log("ErrUITips", ...a),
+  fixPicImgType: () => {}, getAppSetting: () => {}, onInstallFinished: () => {},
+  onUpdateGeneralFlag: () => {}, onGetOfflineMsg: () => {}
+};
+const dependsAdapter = {
+  onMSFStatusChange: (st, cr) => log("MSF status change", st, cr),
+  onMSFSsoError: (c, d) => log("MSF sso error", c, d),
+  getGroupCode: () => {}
+};
+const dispatcherAdapter = { dispatchRequest: () => {}, dispatchCall: () => {}, dispatchCallWithJson: () => {} };
+
+let dataPath = "";
+try { dataPath = wrapper.NodeQQNTWrapperUtil.getNTUserDataInfoConfig(); } catch (e) { log("getNTUserDataInfoConfig err", e.message); }
+if (!dataPath || typeof dataPath !== "string") dataPath = path.join(os.homedir(), ".config", "QQ");
+fs.mkdirSync(dataPath, { recursive: true });
+const dataPathGlobal = path.join(dataPath, "global");
+fs.mkdirSync(dataPathGlobal, { recursive: true });
+log("dataPath", dataPath);
+
+const pkg = JSON.parse(fs.readFileSync("/opt/QQ/resources/app/package.json", "utf8"));
+const clientVer = pkg.version;
+const buildVer = String(pkg.buildVersion || "54395");
+const fullVer = clientVer.split("-")[0];
+let appid = "537391511";
+try { const a = pkg.appid; if (a) appid = String(a.linux || a.default || Object.values(a)[0]); } catch (e) {}
+const qua = "V1_LNX_" + fullVer + "_" + buildVer + "_GW_B";
+log("clientVer", clientVer, "appid", appid, "qua", qua);
+
+const engine = wrapper.NodeIQQNTWrapperEngine.get();
+engine.initWithDeskTopConfig({
+  base_path_prefix: "", platform_type: 5, app_type: 4,
+  app_version: clientVer, os_version: os.release(), use_xlog: false, qua: qua,
+  global_path_config: { desktopGlobalPath: dataPathGlobal },
+  thumb_config: { maxSide: 324, minSide: 48, longLimit: 6, density: 2 }
+}, globalAdapter);
+log("engine inited");
+
+const loginService = wrapper.NodeIKernelLoginService.get();
+loginService.initConfig({
+  machineId: "", appid: appid, platVer: os.release(), commonPath: dataPathGlobal,
+  clientVer: clientVer, hostName: "ubuntu", externalVersion: false
+});
+log("login service inited");
+
+let session = null, startupSession = null;
+try { startupSession = wrapper.NodeIQQNTStartupSessionWrapper.create(); } catch (e) { log("startupSession err", e.message); }
+try { session = wrapper.NodeIQQNTWrapperSession.getNTWrapperSession("nt_1"); }
+catch (e) { try { session = wrapper.NodeIQQNTWrapperSession.create(); } catch (e2) { log("session create err", e2.message); } }
+log("session ready:", !!session, "startup:", !!startupSession);
+
+let selfInfo = null;
+let msgService = null;
+
+function extractText(elements) {
+  const parts = [];
+  for (const el of elements || []) {
+    if (el && el.elementType === 1 && el.textElement) parts.push(el.textElement.content || "");
+    else if (el && el.elementType === 2) parts.push("[pic]");
+    else if (el) parts.push("[el" + el.elementType + "]");
+  }
+  return parts.join("");
+}
+function recordMsg(src, m) {
+  try {
+    const rec = {
+      src: src, time: Date.now(),
+      msgId: m.msgId, msgSeq: m.msgSeq, msgTime: m.msgTime, clientSeq: m.clientSeq,
+      chatType: m.chatType, peerUid: m.peerUid, peerUin: m.peerUin || "",
+      senderUid: m.senderUid, senderUin: m.senderUin || "", sendNickName: m.sendNickName || "",
+      text: extractText(m.elements),
+      elements: (m.elements || []).map(el => {
+        const o = { t: el.elementType, id: el.elementId || "" };
+        if (el.elementType === 3 && el.fileElement) { o.fileName = el.fileElement.fileName; o.fileSize = el.fileElement.fileSize; o.fileUuid = el.fileElement.fileUuid; o.filePath = el.fileElement.filePath; }
+        if (el.elementType === 2 && el.picElement) { o.fileName = el.picElement.fileName; o.fileUuid = el.picElement.fileUuid; o.originImageUrl = el.picElement.originImageUrl || ""; }
+        return o;
+      })
+    };
+    fs.appendFileSync(path.join(OUT, "inbox.jsonl"), JSON.stringify(rec) + "\n");
+    log("MSG", src, "chatType", rec.chatType, "from", rec.senderUin || rec.senderUid, "text:", rec.text);
+  } catch (e) { log("recordMsg err", e.message); }
+}
+function attachMsgService() {
+  if (!session || msgService) return;
+  try {
+    msgService = session.getMsgService();
+    const listener = {
+      onRecvMsg: (msgs) => { for (const m of msgs || []) recordMsg("recv", m); },
+      onMsgInfoListUpdate: (msgs) => { for (const m of msgs || []) recordMsg("update", m); },
+      onRecvS2CMsg: (msgs) => { for (const m of msgs || []) recordMsg("s2c", m); },
+      onRichMediaDownloadComplete: (arg) => { try { log("DL complete", JSON.stringify(arg)); if (arg && arg.filePath && fs.existsSync(arg.filePath)) { const dest = path.join(OUT, "files", "inbox"); fs.mkdirSync(dest, { recursive: true }); const d = path.join(dest, path.basename(arg.filePath)); fs.copyFileSync(arg.filePath, d); log("DL saved to", d); } } catch (e) { log("dl cb err", e.message); } },
+      onMsgRecall: (...a) => log("msg recall", ...a),
+      onKickedOffLine: (...a) => { log("KICKED OFFLINE", ...a); writeStatus({ phase: "kicked", at: Date.now() }); }
+    };
+    msgService.addKernelMsgListener(listener);
+    log("msg listener attached");
+    attachGroupService();
+    status({ phase: "online", uin: selfInfo && selfInfo.uin, uid: selfInfo && selfInfo.uid });
+    startSendQueue();
+  } catch (e) { log("attachMsgService err", (e && e.stack) || String(e)); }
+}
+let groupService = null;
+function qlog(obj) { try { fs.appendFileSync(path.join(OUT, "query_results.jsonl"), JSON.stringify(obj) + "\n"); } catch (e) {} log("QUERY", obj.q, obj.error || (obj.groups ? obj.groups.length + " groups" : obj.count != null ? obj.count + " members" : "ok")); }
+function attachGroupService() {
+  if (!session || groupService) return;
+  try {
+    groupService = session.getGroupService();
+    const gl = {
+      onGroupListUpdate: (updateType, groupList) => { qlog({ q: "group_list", time: Date.now(), updateType: updateType, groups: (groupList || []).map(g => ({ groupCode: g.groupCode, groupName: g.groupName, memberCount: g.memberCount, maxMemberCount: g.maxMemberCount, ownerUid: g.ownerUid })) }); },
+      onMemberListChange: () => {}, onMemberInfoChange: () => {}, onSearchMemberChange: () => {},
+      onShutUpMemberListChanged: () => {}, onGroupDetailInfoUpdate: () => {}, onGroupExtListUpdate: () => {},
+      onGroupBulletinUpdate: () => {}, onGroupAdminListUpdate: () => {}, onGroupMemberMaxNumUpdate: () => {},
+      onGroupSimpleInfoUpdate: () => {}, onJoinGroupResult: () => {}, onQuitGroupResult: () => {}
+    };
+    groupService.addKernelGroupListener(gl);
+    log("group listener attached");
+    attachBuddyService();
+    attachProfileService();
+    startQueryQueue();
+  } catch (e) { log("attachGroupService err", (e && e.stack) || String(e)); }
+}
+let buddyService = null;
+function attachBuddyService() {
+  if (!session || buddyService) return;
+  try {
+    buddyService = session.getBuddyService();
+    buddyService.addKernelBuddyListener({
+      onBuddyReqChange: (arg) => { try { qlog({ q: "buddy_reqs", time: Date.now(), notify: JSON.parse(JSON.stringify(arg)) }); } catch (e) { log("buddyReqChange ser err", e.message); } },
+      onBuddyListChange: () => {}, onBuddyListChangedV2: () => {}, onBuddyRemarkUpdated: () => {},
+      onBuddyReqUnreadCntChange: () => {}, onDoubtBuddyReqChange: () => {}, onCheckBuddySettingResult: () => {}, onDelBatchBuddyInfos: () => {}
+    });
+    log("buddy listener attached");
+  } catch (e) { log("attachBuddyService err", (e && e.stack) || String(e)); }
+}
+let profileService = null;
+const profileWaiters = new Map();
+function attachProfileService() {
+  if (!session || profileService) return;
+  try {
+    profileService = session.getProfileService();
+    profileService.addKernelProfileListener({
+      onUserDetailInfoChanged: (arg) => { try { const w = arg && profileWaiters.get(arg.uid); if (w) { profileWaiters.delete(arg.uid); w(arg); } } catch (e) {} },
+      onProfileDetailInfoChanged: () => {}, onProfileSimpleChanged: () => {}, onGroupDetailInfoChange: () => {}
+    });
+    log("profile listener attached");
+  } catch (e) { log("attachProfileService err", (e && e.stack) || String(e)); }
+}
+function fetchProfile(uid, timeoutMs) {
+  return new Promise((resolve) => {
+    const to = setTimeout(() => { profileWaiters.delete(uid); resolve(null); }, timeoutMs || 5000);
+    profileWaiters.set(uid, (arg) => { clearTimeout(to); resolve(arg); });
+    try { profileService.fetchUserDetailInfo("BuddyProfileStore", [uid], 1, [0]); } catch (e) { clearTimeout(to); profileWaiters.delete(uid); resolve(null); }
+  });
+}
+let queryRunning = false;
+function startQueryQueue() {
+  if (queryRunning) return;
+  queryRunning = true;
+  const qf = path.join(OUT, "query_queue.jsonl");
+  setInterval(async () => {
+    try {
+      if (!fs.existsSync(qf)) return;
+      const lines = fs.readFileSync(qf, "utf8").split("\n").filter(x => x.trim());
+      if (!lines.length) return;
+      fs.writeFileSync(qf, "");
+      for (const line of lines) {
+        try {
+          const job = JSON.parse(line);
+          if (job.q === "group_list") {
+            await groupService.getGroupList(false);
+          } else if (job.q === "profile_probe") {
+            const info = await fetchProfile(job.uid);
+            qlog({ q: "profile_probe", time: Date.now(), uid: job.uid, raw: info ? JSON.parse(JSON.stringify(info)) : null });
+          } else if (job.q === "buddy_list") {
+            const r = await buddyService.getBuddyListV2("qqours", false, 0);
+            const cats = (r && r.data) || [];
+            const out = [];
+            let profileService = null;
+            try { profileService = session.getProfileService(); } catch (e) {}
+            for (const c of cats) {
+              for (const uid of (c.buddyUids || [])) {
+                const item = { uid: uid, category: c.categroyName };
+                if (profileService) {
+                  const info = await fetchProfile(uid);
+                  if (info) {
+                    item.uin = info.uin || "";
+                    const ci = (info.simpleInfo && info.simpleInfo.coreInfo) || {};
+                    item.nick = ci.nick || "";
+                    item.remark = ci.remark || "";
+                  }
+                }
+                out.push(item);
+              }
+            }
+            qlog({ q: "buddy_list", time: Date.now(), count: out.length, buddies: out });
+          } else if (job.q === "buddy_reqs") {
+            await buddyService.getBuddyReq();
+            log("buddy reqs requested (listener will record)");
+          } else if (job.q === "profile_uin") {
+            const info = await profileService.getUserDetailInfoByUin(String(job.uin));
+            qlog({ q: "profile_uin", time: Date.now(), uin: String(job.uin), raw: JSON.parse(JSON.stringify(info || {})) });
+          } else if (job.q === "profile_like") {
+            const svc = session.getProfileLikeService();
+            const r = await svc.setBuddyProfileLike({ friendUid: job.uid, sourceId: 71, doLikeCount: Number(job.count || 1), doLikeTollCount: 0 });
+            qlog({ q: "profile_like", time: Date.now(), uid: job.uid, count: Number(job.count || 1), res: r });
+          } else if (job.q === "profile_like_get") {
+            const svc = session.getProfileLikeService();
+            const r = await svc.getBuddyProfileLike({ friendUids: [job.uid], basic: 1, vote: 1, favorite: 0, userProfile: 1, type: job.type != null ? job.type : 1, start: 0, limit: 20 });
+            qlog({ q: "profile_like_get", time: Date.now(), uid: job.uid, raw: JSON.parse(JSON.stringify(r || {})) });
+          } else if (job.q === "set_longnick") {
+            const r = await profileService.setLongNick(job.text || "");
+            qlog({ q: "set_longnick", time: Date.now(), text: job.text || "", res: r || "void" });
+          } else if (job.q === "member_mute") {
+            const r = await groupService.setMemberShutUp(String(job.groupCode), [{ uid: job.uid, timeStamp: Number(job.seconds || 0) }]);
+            qlog({ q: "member_mute", time: Date.now(), groupCode: String(job.groupCode), uid: job.uid, seconds: Number(job.seconds || 0), res: r });
+          } else if (job.q === "member_kick") {
+            const r = await groupService.kickMember(String(job.groupCode), [job.uid], !!job.refuseForever, job.reason || "");
+            qlog({ q: "member_kick", time: Date.now(), groupCode: String(job.groupCode), uid: job.uid, res: r || "void" });
+          } else if (job.q === "member_card") {
+            groupService.modifyMemberCardName(String(job.groupCode), job.uid, job.card || "");
+            qlog({ q: "member_card", time: Date.now(), groupCode: String(job.groupCode), uid: job.uid, card: job.card || "", done: true });
+          } else if (job.q === "buddy_approve") {
+            await buddyService.approvalFriendRequest({ friendUid: job.friendUid, reqTime: String(job.reqTime), accept: !!job.accept });
+            qlog({ q: "buddy_approve", time: Date.now(), friendUid: job.friendUid, accept: !!job.accept, done: true });
+          } else if (job.q === "group_members") {
+            const r = await groupService.getAllMemberList(String(job.groupCode), job.force === false ? false : true);
+            const infos = (r && r.result && r.result.infos) || (r && r.infos);
+            const arr = infos instanceof Map ? [...infos.values()] : Object.values(infos || {});
+            qlog({ q: "group_members", time: Date.now(), groupCode: String(job.groupCode), count: arr.length, members: arr.map(m => ({ uid: m.uid, uin: m.uin, nick: m.nick, card: m.cardName, role: m.role })) });
+          } else {
+            qlog({ q: job.q || "?", error: "unknown query" });
+          }
+        } catch (e) { qlog({ q: "error", error: e.message, line: line }); }
+      }
+    } catch (e) { log("query queue err", e.message); }
+  }, 2000);
+  log("query queue watcher started");
+}
+function textElement(text) {
+  return { elementType: 1, elementId: "", textElement: { content: text, atType: 0, atUid: "", atTinyId: "", atNtUid: "" } };
+}
+let queueRunning = false;
+function startSendQueue() {
+  if (queueRunning) return;
+  queueRunning = true;
+  const qf = path.join(OUT, "send_queue.jsonl");
+  setInterval(async () => {
+    try {
+      if (!fs.existsSync(qf)) return;
+      const lines = fs.readFileSync(qf, "utf8").split("\n").filter(x => x.trim());
+      if (!lines.length) return;
+      fs.writeFileSync(qf, "");
+      for (const line of lines) {
+        try {
+          const job = JSON.parse(line);
+          const peer = { chatType: job.chatType, peerUid: job.peerUid, guildId: job.guildId || "" };
+          if (job.type === "recall") {
+            const rr = await msgService.recallMsg(peer, [job.msgId]);
+            log("RECALL ->", JSON.stringify(peer), job.msgId, "res:", JSON.stringify(rr));
+            continue;
+          }
+          if (job.type === "download") {
+            const got = await msgService.getMsgsByMsgId(peer, [job.msgId]);
+            const rm = got && got.msgList && got.msgList[0];
+            const fel = rm && (rm.elements || []).find(e => e.elementType === 3 || e.elementType === 2 || e.elementType === 5);
+            if (!fel) { log("download: no media element in", job.msgId); continue; }
+            const r = msgService.downloadRichMedia({ fileModelId: "0", downSourceType: 0, downloadSourceType: 0, triggerType: 1, msgId: job.msgId, chatType: job.chatType, peerUid: job.peerUid, elementId: fel.elementId, thumbSize: 0, downloadType: 1, filePath: "" });
+            log("DOWNLOAD ->", job.msgId, "el", fel.elementId, "ret:", JSON.stringify(r));
+            continue;
+          }
+          let elements, label;
+          if (job.type === "face") {
+            elements = [{ elementType: 6, elementId: "", faceElement: { faceIndex: Number(job.faceIndex || 14), faceType: 1, faceText: job.faceText || "/微笑", sourceType: 1 } }];
+            label = "face:" + (job.faceIndex || 14);
+          } else if (job.type === "file") {
+            const buf = fs.readFileSync(job.path);
+            const md5 = require("crypto").createHash("md5").update(buf).digest("hex");
+            const fileName = path.basename(job.path);
+            let mediaPath = job.path;
+            try {
+              mediaPath = msgService.getRichMediaFilePathForGuild({ md5HexStr: md5, fileName: fileName, elementType: 3, elementSubType: 0, thumbSize: 0, needCreate: true, downloadType: 1, file_uuid: "" });
+              if (mediaPath && mediaPath !== job.path) fs.copyFileSync(job.path, mediaPath);
+            } catch (e) { log("richmedia path err", e.message); mediaPath = job.path; }
+            elements = [{ elementType: 3, elementId: "", fileElement: { fileName: fileName, folderId: "", filePath: mediaPath, fileSize: String(buf.length) } }];
+            label = "file:" + fileName;
+          } else if (job.type === "reply") {
+            const got = await msgService.getMsgsByMsgId(peer, [job.replyMsgId]);
+            const rm = got && got.msgList && got.msgList[0];
+            if (!rm) { log("reply target not found", job.replyMsgId); continue; }
+            const replyEl = { elementType: 7, elementId: "", replyElement: { replayMsgSeq: rm.msgSeq, replayMsgId: rm.msgId, senderUin: rm.senderUin, senderUinStr: rm.senderUin, replyMsgClientSeq: rm.clientSeq } };
+            elements = [replyEl, textElement(job.text)];
+            label = "reply->" + job.replyMsgId + " text: " + job.text;
+          } else if (job.type === "text_at") {
+            const atEl = { elementType: 1, elementId: "", textElement: { content: "@" + job.atNick + " ", atType: 2, atUid: String(job.atUin), atTinyId: "", atNtUid: job.atUid } };
+            elements = [atEl, textElement(job.text)];
+            label = "at " + job.atUin + " text: " + job.text;
+          } else if (job.type === "pic") {
+            const buf = fs.readFileSync(job.path);
+            const md5 = require("crypto").createHash("md5").update(buf).digest("hex");
+            const fileName = path.basename(job.path);
+            let mediaPath = job.path;
+            try {
+              mediaPath = msgService.getRichMediaFilePathForGuild({ md5HexStr: md5, fileName: fileName, elementType: 2, elementSubType: 0, thumbSize: 0, needCreate: true, downloadType: 1, file_uuid: "" });
+              if (mediaPath && mediaPath !== job.path) fs.copyFileSync(job.path, mediaPath);
+            } catch (e) { log("richmedia path err", e.message); mediaPath = job.path; }
+            let w = 800, h = 800;
+            if (buf.length > 24 && buf[0] === 0x89 && buf[1] === 0x50) { w = buf.readUInt32BE(16); h = buf.readUInt32BE(20); }
+            const ext = (fileName.split(".").pop() || "").toLowerCase();
+            const picType = ext === "png" ? 1001 : ext === "gif" ? 2000 : ext === "webp" ? 1002 : 1000;
+            elements = [{ elementType: 2, elementId: "", picElement: { md5HexStr: md5, fileSize: String(buf.length), picWidth: w, picHeight: h, fileName: fileName, sourcePath: mediaPath, original: true, picType: picType, picSubType: 0, fileUuid: "", fileSubId: "", thumbFileSize: 0, summary: "" } }];
+            label = "pic:" + fileName;
+          } else {
+            elements = [textElement(job.text)];
+            label = "text: " + job.text;
+          }
+          const res = await msgService.sendMsg("0", peer, elements, new Map());
+          log("SEND ->", JSON.stringify(peer), label, "res:", JSON.stringify(res));
+        } catch (e) { log("send job err", e.message, line); }
+      }
+    } catch (e) { log("send queue err", e.message); }
+  }, 1500);
+  log("send queue watcher started");
+}
+
+async function initSession(res) {
+  try {
+    if (!session) { log("no session to init"); return; }
+    let guidRaw = "";
+    try { guidRaw = loginService.getMachineGuid(); } catch (e) {}
+    const guid = guidRaw && guidRaw.length >= 32
+      ? guidRaw.slice(0, 8) + "-" + guidRaw.slice(8, 12) + "-" + guidRaw.slice(12, 16) + "-" + guidRaw.slice(16, 20) + "-" + guidRaw.slice(20)
+      : guidRaw;
+    const downloadPath = path.join(dataPath, "qqours", "temp");
+    fs.mkdirSync(downloadPath, { recursive: true });
+    const cfg = {
+      selfUin: String(res.uin || ""), selfUid: String(res.uid || ""),
+      desktopPathConfig: { account_path: dataPath },
+      clientVer: clientVer, a2: "", d2: "", d2Key: "", machineId: "",
+      platform: 5, platVer: os.release(), appid: appid,
+      rdeliveryConfig: { appKey: "", systemId: 0, appId: "", logicEnvironment: "", platform: 5, language: "", sdkVersion: "", userId: "", appVersion: "", osVersion: "", bundleId: "", serverUrl: "", fixedAfterHitKeys: [""] },
+      defaultFileDownloadPath: downloadPath,
+      deviceInfo: { guid: guid, buildVer: clientVer, localId: 2052, devName: "ubuntu", devType: "Linux", vendorName: "", osVer: os.release(), vendorOsName: "Linux", setMute: false, vendorType: 0 },
+      deviceConfig: "{\"appearance\":{\"isSplitViewMode\":true},\"msg\":{}}"
+    };
+    const sessionListener = { onOpentelemetryInit: (info) => { log("opentelemetry init", JSON.stringify(info)); if (info && info.is_init) { status({ phase: "session_ok", uin: cfg.selfUin, uid: cfg.selfUid }); attachMsgService(); } } };
+    session.init(cfg, dependsAdapter, dispatcherAdapter, sessionListener);
+    if (startupSession) startupSession.start();
+    else { try { session.startNT(0); } catch (e) { session.startNT(); } }
+    log("session init called");
+  } catch (e) { log("initSession err", (e && e.stack) || String(e)); }
+}
+
+let loginDone = false;
+const loginListener = {
+  onLoginConnected: () => log("login connected"),
+  onLoginDisConnected: (...a) => log("login disconnected", ...a),
+  onLoginConnecting: () => log("login connecting"),
+  onQRCodeGetPicture: (arg) => {
+    log("QR picture url:", arg && arg.qrcodeUrl);
+    try {
+      fs.writeFileSync(path.join(OUT, "qrcode.url.txt"), (arg && arg.qrcodeUrl) || "");
+      status({ phase: "qrcode", url: arg && arg.qrcodeUrl });
+    } catch (e) { log("write qr err", e.message); }
+  },
+  onQRCodeLoginPollingStarted: () => log("qr polling started"),
+  onQRCodeSessionUserScaned: () => { log("QR SCANNED"); status({ phase: "scanned" }); },
+  onQRCodeLoginSucceed: (res) => { if (loginDone) return; loginDone = true; selfInfo = res; log("LOGIN SUCCEED", JSON.stringify(res)); status({ phase: "login_succeed", result: res }); initSession(res); },
+  onQRCodeSessionFailed: (t, c) => { log("qr session failed", t, c); if (!loginDone) setTimeout(() => { try { log("refresh qr ->", loginService.getQRCodePicture()); } catch (e) { log("refresh err", e.message); } }, 1000); },
+  onLoginFailed: (...a) => log("login failed", ...a),
+  onLogoutSucceed: () => log("logout ok"),
+  onLogoutFailed: (...a) => log("logout failed", ...a),
+  onUserLoggedIn: (uid) => log("user already logged in", uid),
+  onQRCodeSessionQuickLoginFailed: (...a) => { log("quick login failed", ...a); if (!loginDone) { try { loginService.getQRCodePicture(); } catch (e) {} } },
+  onPasswordLoginFailed: (...a) => log("password login failed", ...a),
+  onQQLoginNumLimited: (...a) => log("login num limited", ...a),
+  onLoginState: (...a) => log("login state", ...a),
+  onLoginRecordUpdate: (...a) => log("login record update", ...a)
+};
+loginService.addKernelLoginListener(loginListener);
+log("login listener added");
+
+(async () => {
+  let list = null;
+  try { list = await loginService.getLoginList(); log("login list", JSON.stringify(list).slice(0, 400)); }
+  catch (e) { log("getLoginList err", e.message); }
+  for (let i = 0; i < 40; i++) {
+    let st; try { st = loginService.getMsfStatus(); } catch (e) { st = "err:" + e.message; }
+    if (st !== 3) break;
+    await new Promise(r => setTimeout(r, 500));
+  }
+  log("msf ready");
+  const quick = list && list.LocalLoginInfoList && list.LocalLoginInfoList.find(x => x.isQuickLogin);
+  if (quick) {
+    log("try quick login uin", quick.uin);
+    try {
+      const r = await loginService.quickLoginWithUin(String(quick.uin));
+      log("quickLoginWithUin ->", JSON.stringify(r).slice(0, 200));
+    } catch (e) { log("quick login call err", e.message); }
+    setTimeout(() => { if (!loginDone) { log("quick login timeout, fallback to QR"); try { loginService.getQRCodePicture(); } catch (e) {} } }, 20000);
+  } else {
+    log("no quick login entry, request QR");
+    loginService.getQRCodePicture();
+  }
+})();

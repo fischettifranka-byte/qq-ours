@@ -1,0 +1,11 @@
+# runtime data — never commit
+*.jsonl
+*.log
+status.json
+run.log
+boot.log
+bridge_state.json
+files/
+__pycache__/
+qr*.png
+*.tmp
