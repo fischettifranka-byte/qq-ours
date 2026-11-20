@@ -47,3 +47,21 @@
   Essence list call resolves oddly (no qlog line); low priority.
 - Group files: FileAssistantService is the file assistant, not group files;
   group file list likely needs the qun web API. Not wired yet.
+
+## E batch notes (2026-11-20)
+
+- Group files: RichMediaService.getGroupFileList(group, {sortType:1,
+  fileCount, startIndex:0, sortOrder:2, showOnlinedocFolder:0}); results
+  arrive via MsgListener.onGroupFileInfoUpdate (item[] with folderInfo /
+  fileInfo{fileModelId, fileId, fileName, fileSize, busId, uploaderUin}).
+  Downloads: downloadFileForFileUuid(peer, fileId, [{fileId, fileName,
+  fileSize, fileModelId}]) and downloadFileForFileInfo([info], savePath)
+  both return {} and register a flash-transfer task (nt_flash_transfer.db),
+  but no payload file was found on disk within minutes. Landing unconfirmed.
+- Poke: OIDB 0xED3 sub 1, protobuf {uin: target, groupUin|friendUin: peer,
+  ext: 0}. Transport needs NapCat native packet hook (napi2native) inside
+  the QQ process — a closed binary component. Not feasible to reproduce
+  quickly; stays deferred.
+- searchStranger(keyword, 0, {}) no longer crashes (result 0) but its
+  result callback was not located (not onSearchStrangerResult; maybe the
+  UnifySearch service). searchGroup works fully via onSearchGroupResult.
