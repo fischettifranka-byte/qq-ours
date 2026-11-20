@@ -428,6 +428,11 @@ function startQueryQueue() {
             const svc = session.getRichMediaService();
             const r = await svc.downloadFileForFileInfo([job.info], job.savePath || "/data/qq-ours/files/inbox/");
             qlog({ q: "group_file_download2", time: Date.now(), raw: JSON.stringify(r || {}).slice(0, 200) });
+          } else if (job.q === "group_file_download3") {
+            const svc = session.getRichMediaService();
+            const peer = { chatType: 2, peerUid: String(job.group), guildId: "" };
+            const r = await svc.downloadFileForModelId(peer, [String(job.fileModelId)], "");
+            qlog({ q: "group_file_download3", time: Date.now(), group: String(job.group), fileModelId: String(job.fileModelId), raw: JSON.stringify(r || {}).slice(0, 200) });
           } else if (job.q === "oidb_send") {
             const svc = getECDH();
             const r = await svc.sendOIDBRequest(Number(job.cmd), Number(job.serviceType || 0), Number(job.subCmd || 1), job.dataHex || "", job.extra !== undefined ? job.extra : null);
