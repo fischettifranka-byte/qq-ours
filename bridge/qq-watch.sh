@@ -10,7 +10,7 @@ if ! flock -n 9; then
   exit 0
 fi
 touch "$STATE_DIR/qq-heartbeat"
-OUT=$(ssh -i /home/SSH_USER/.ssh/id_ed25519 -o UserKnownHostsFile=/home/SSH_USER/.ssh/known_hosts -o GlobalKnownHostsFile=/dev/null -o ConnectTimeout=10 root@SERVER_HOST 'python3 /data/qq-ours/bridge_claim.py' 2>/dev/null || echo "")
+OUT=$(ssh -i /home/SSH_USER/.ssh/id_ed25519 -o UserKnownHostsFile=/home/SSH_USER/.ssh/known_hosts -o GlobalKnownHostsFile=/dev/null -o ConnectTimeout=10 root@SERVER_HOST 'python3 /data/qq-ours/bridge/bridge_claim.py' 2>/dev/null || echo "")
 PENDING="$STATE_DIR/qq-pending.json"
 # merge: existing pending (if any) + new batch; wake whenever pending is non-empty
 CNT=$(OUT="${OUT:-[]}" PENDING="$PENDING" python3 - <<'PYEOF'
