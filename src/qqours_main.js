@@ -125,6 +125,14 @@ function attachMsgService() {
     msgService.addKernelMsgListener(listener);
     log("msg listener attached");
     attachGroupService();
+    try {
+      const ss = session.getSearchService();
+      ss.addKernelSearchListener({
+        onSearchGroupResult: (params) => { try { qlog({ q: "search_group_result", time: Date.now(), raw: JSON.stringify(params || {}).slice(0, 1500) }); } catch (e) {} },
+        onSearchStrangerResult: () => {}, onSearchLocalInfoResult: () => {}, onSearchFileKeywordsResult: () => {}, onSearchMsgKeywordsResult: () => {}
+      });
+      log("search listener attached");
+    } catch (e) { log("search listener err", e.message); }
     status({ phase: "online", uin: selfInfo && selfInfo.uin, uid: selfInfo && selfInfo.uid });
     startSendQueue();
   } catch (e) { log("attachMsgService err", (e && e.stack) || String(e)); }
@@ -325,7 +333,17 @@ function startQueryQueue() {
             qlog({ q: "search_stranger", time: Date.now(), keyword: job.keyword || "", raw: JSON.stringify(r || {}).slice(0, 800) });
           } else if (job.q === "history") {
             const peer = { chatType: job.chatType || 1, peerUid: String(job.peerUid), guildId: "" };
-            const r = await msgService.getMsgsBySeqAndCount(peer, "0", Number(job.count || 10), true, false);
+            let anchor = job.msgId ? String(job.msgId) : "";
+            if (!anchor) {
+              try {
+                const lines = fs.readFileSync(path.join(OUT, "inbox.jsonl"), "utf8").split(String.fromCharCode(10)).filter(x => x.trim());
+                for (let i = lines.length - 1; i >= 0; i--) {
+                  const rec = JSON.parse(lines[i]);
+                  if (rec.peerUid === String(job.peerUid) && rec.msgId) { anchor = rec.msgId; break; }
+                }
+              } catch (e) {}
+            }
+            const r = await msgService.getMsgsIncludeSelf(peer, anchor, Number(job.count || 10), true);
             const list = (r && r.msgList) || [];
             qlog({ q: "history", time: Date.now(), peerUid: String(job.peerUid), count: list.length, msgs: list.map(m => ({ msgId: m.msgId, senderUin: m.senderUin, text: (m.elements || []).map(e => (e.textElement && e.textElement.content) || ("[t" + e.elementType + "]")).join("") })) });
           } else if (job.q === "group_members") {
