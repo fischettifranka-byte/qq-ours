@@ -209,6 +209,15 @@ async function qunPskey() {
   if (m instanceof Map) return m.get("qun.qq.com");
   return m && m["qun.qq.com"];
 }
+async function qzoneAuth() {
+  const r = await session.getTipOffService().getPskey(["qzone.qq.com"], true);
+  const m = r && r.domainPskeyMap;
+  const pk = m instanceof Map ? m.get("qzone.qq.com") : (m && m["qzone.qq.com"]);
+  let gtk = 5381;
+  const key = pk || "";
+  for (let i = 0; i < key.length; i++) gtk += (gtk << 5) + key.charCodeAt(i);
+  return { pk: pk, gtk: gtk & 0x7fffffff };
+}
 function startQueryQueue() {
   if (queryRunning) return;
   queryRunning = true;
@@ -346,6 +355,24 @@ function startQueryQueue() {
             const r = await msgService.getMsgsIncludeSelf(peer, anchor, Number(job.count || 10), true);
             const list = (r && r.msgList) || [];
             qlog({ q: "history", time: Date.now(), peerUid: String(job.peerUid), count: list.length, msgs: list.map(m => ({ msgId: m.msgId, senderUin: m.senderUin, text: (m.elements || []).map(e => (e.textElement && e.textElement.content) || ("[t" + e.elementType + "]")).join("") })) });
+          } else if (job.q === "qzone_list") {
+            const auth = await qzoneAuth();
+            const target = String(job.uin || (selfInfo && selfInfo.uin) || "");
+            const url = "https://user.qzone.qq.com/proxy/domain/taotao.qq.com/cgi-bin/emotion_cgi_msglist_v6?uin=" + target + "&ftype=0&sort=0&pos=0&num=" + Number(job.num || 10) + "&replynum=0&g_tk=" + auth.gtk + "&code_version=1&format=jsonp&need_private_comment=1";
+            const resp = await fetch(url, { headers: { Cookie: "uin=o" + target + "; p_uin=o" + target + "; p_skey=" + auth.pk, Referer: "https://user.qzone.qq.com/" + target } });
+            const txt = await resp.text();
+            let data = null;
+            try { data = JSON.parse(txt.replace(/^_Callback\(/, "").replace(/\);?$/, "")); } catch (e) {}
+            const list = (data && data.msglist) || [];
+            qlog({ q: "qzone_list", time: Date.now(), uin: target, code: data && data.code, count: list.length, msgs: list.map(m => ({ tid: m.tid, time: m.created_time, content: String(m.content || "").slice(0, 60), cmtnum: m.cmtnum })) });
+          } else if (job.q === "qzone_like") {
+            const auth = await qzoneAuth();
+            const self = String((selfInfo && selfInfo.uin) || "");
+            const target = String(job.uin || "");
+            const body = new URLSearchParams({ qzreferrer: "https://user.qzone.qq.com/" + target, opuin: self, unikey: "http://user.qzone.qq.com/" + target + "/mood/" + job.tid + ".1", liketype: "0", active: job.cancel ? "1" : "0", appid: "311", blogtype: "0", paramstring: "tl", format: "json" });
+            const resp = await fetch("https://user.qzone.qq.com/proxy/domain/w.qzone.qq.com/cgi-bin/likes/internal_dolike_app?g_tk=" + auth.gtk, { method: "POST", headers: { Cookie: "uin=o" + self + "; p_uin=o" + self + "; p_skey=" + auth.pk, "Content-Type": "application/x-www-form-urlencoded", Referer: "https://user.qzone.qq.com/" + target }, body: body.toString() });
+            const txt = await resp.text();
+            qlog({ q: "qzone_like", time: Date.now(), uin: target, tid: job.tid, raw: txt.slice(0, 200) });
           } else if (job.q === "group_members") {
             const r = await groupService.getAllMemberList(String(job.groupCode), job.force === false ? false : true);
             const infos = (r && r.result && r.result.infos) || (r && r.infos);
