@@ -284,6 +284,13 @@ function startSendQueue() {
         try {
           const job = JSON.parse(line);
           const peer = { chatType: job.chatType, peerUid: job.peerUid, guildId: job.guildId || "" };
+          if (job.type === "forward") {
+            const src = { chatType: job.fromChatType, peerUid: job.fromPeerUid, guildId: "" };
+            const dst = { chatType: job.toChatType, peerUid: job.toPeerUid, guildId: "" };
+            const fr = await msgService.forwardMsg(job.msgIds, src, [dst], []);
+            log("FORWARD ->", JSON.stringify(job.msgIds), "res:", JSON.stringify(fr));
+            continue;
+          }
           if (job.type === "recall") {
             const rr = await msgService.recallMsg(peer, [job.msgId]);
             log("RECALL ->", JSON.stringify(peer), job.msgId, "res:", JSON.stringify(rr));
