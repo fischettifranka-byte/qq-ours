@@ -356,7 +356,7 @@ function startQueryQueue() {
             qlog({ q: "search_group", time: Date.now(), keyword: job.keyword || "", raw: JSON.stringify(r || {}).slice(0, 800) });
           } else if (job.q === "search_stranger") {
             const svc = session.getSearchService();
-            const r = await svc.searchStranger(job.keyword || "", null, null);
+            const r = await svc.searchStranger(job.keyword || "", job.searchType != null ? job.searchType : 0, job.searchParams || {});
             qlog({ q: "search_stranger", time: Date.now(), keyword: job.keyword || "", raw: JSON.stringify(r || {}).slice(0, 800) });
           } else if (job.q === "history") {
             const peer = { chatType: job.chatType || 1, peerUid: String(job.peerUid), guildId: "" };
