@@ -126,7 +126,7 @@ function attachMsgService() {
       onRecvS2CMsg: (msgs) => { for (const m of msgs || []) recordMsg("s2c", m); },
       onRichMediaDownloadComplete: (arg) => { try { log("DL complete", JSON.stringify(arg)); if (arg && arg.filePath && fs.existsSync(arg.filePath)) { const dest = path.join(OUT, "files", "inbox"); fs.mkdirSync(dest, { recursive: true }); const d = path.join(dest, path.basename(arg.filePath)); fs.copyFileSync(arg.filePath, d); log("DL saved to", d); } } catch (e) { log("dl cb err", e.message); } },
       onMsgRecall: (...a) => log("msg recall", ...a),
-      onKickedOffLine: (...a) => { log("KICKED OFFLINE", ...a); writeStatus({ phase: "kicked", at: Date.now() }); }
+      onKickedOffLine: (...a) => { log("KICKED OFFLINE", ...a); status({ phase: "kicked", at: Date.now() }); }
     };
     msgService.addKernelMsgListener(listener);
     log("msg listener attached");
