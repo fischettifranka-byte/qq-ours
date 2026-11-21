@@ -59,14 +59,18 @@ curl -s -H "Authorization: Bearer $TOKEN" -H 'Content-Type: application/json' \
 | `set_friend_remark` | 改备注（`setBuddyRemark`，会清好友缓存） |
 | `set_friend_category` | 好友分组（`setBuddyCategory`） |
 | `mark_msg_as_read` | 标记已读（`setMsgRead`，单参数对象） |
+| `upload_group_file` | 往群里发文件消息（OneBot 语义，≠群空间上传） |
+| `upload_private_file` | 私聊发文件 |
 | `debug_probe` | 探针：列出任意内核服务的方法名，排障用 |
 | `set_friend_add_request` | 好友申请审批，flag 格式 `friendUid|reqTime` |
 | `set_group_add_request` | 入群审批，flag 格式 `seq|type|groupCode` |
 
 ## 未实现（调用会返回明确原因）
 
-`upload_group_file`（`onlyUploadFile` / `uploadRMFileWithoutMsg` 已定位，签名与回调未验证）、
+真正上传到**群文件空间**（`onlyUploadFile` / `uploadRMFileWithoutMsg` 签名与回调未验证）、
 `get_group_honor_info`、`send_like`（需 OIDB，与戳一戳同路）、`get_recent_contact`。
+
+> 注：NapCat 的 `upload_group_file` 也只是发一条文件消息，本项目与其语义一致。
 
 ## 运行时开关（`/data/qq-ours/config.json`，可选）
 

@@ -1115,7 +1115,24 @@ Object.assign(apiCalls, {
     const r = await tryCall(svc, ["deleteGroupFile"], [String(groupId), String(fileId)]);
     return { group_id: Number(groupId), file_id: String(fileId), raw: r };
   },
-  async uploadGroupFile() { throw new Error("暂不可用: 群文件上传（RichMediaService.onlyUploadFile / uploadRMFileWithoutMsg 已定位，签名与回调未验证）"); },
+  async uploadGroupFile(groupId, filePath, name) {
+    if (!filePath || !fs.existsSync(filePath)) throw new Error("文件不存在: " + filePath);
+    if (!rateOk()) throw new Error("发送过于频繁，已限流");
+    const el = buildMediaElement("file", filePath);
+    if (name) el.fileElement.fileName = String(name);
+    const res = await msgService.sendMsg("0", { chatType: 2, peerUid: String(groupId), guildId: "" }, [el], new Map());
+    return { group_id: Number(groupId), file: String(filePath), note: "以群消息形式发送（OneBot 语义），不是上传到群文件空间", res: res };
+  },
+  async uploadPrivateFile(userId, filePath, name) {
+    if (!filePath || !fs.existsSync(filePath)) throw new Error("文件不存在: " + filePath);
+    if (!rateOk()) throw new Error("发送过于频繁，已限流");
+    const peerUid = await resolveUid(userId);
+    if (!peerUid) throw new Error("找不到该好友的 uid: " + userId);
+    const el = buildMediaElement("file", filePath);
+    if (name) el.fileElement.fileName = String(name);
+    const res = await msgService.sendMsg("0", { chatType: 1, peerUid: peerUid, guildId: "" }, [el], new Map());
+    return { user_id: Number(userId), file: String(filePath), res: res };
+  },
   async friendAdd(userId, remark) {
     const uid = await resolveUid(userId).catch(() => null);
     const shapes = [

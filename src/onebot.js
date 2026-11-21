@@ -134,6 +134,7 @@ function actionTable() {
   need("set_group_name", async (p, ctx) => ctx.call.groupRename(p.group_id || p.group, p.group_name || ""));
   need("delete_group_file", async (p, ctx) => ctx.call.deleteGroupFile(p.group_id || p.group, p.file_id || p.file));
   need("upload_group_file", async (p, ctx) => ctx.call.uploadGroupFile(p.group_id || p.group, p.file, p.name || ""));
+  need("upload_private_file", async (p, ctx) => ctx.call.uploadPrivateFile(p.user_id, p.file, p.name || ""));
   need("add_friend", async (p, ctx) => ctx.call.friendAdd(p.user_id, p.remark || ""));
   need("delete_friend", async (p, ctx) => ctx.call.friendDelete(p.user_id));
   need("set_friend_remark", async (p, ctx) => ctx.call.friendRemark(p.user_id, p.remark || ""));
