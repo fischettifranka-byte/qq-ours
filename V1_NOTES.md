@@ -130,3 +130,34 @@
   美国 AS53767 iCastCenter、美国 AS14315 1GSERVERS、美国 AS62610 Zenlayer。
 - 结论：没有一个适合挂 QQ（全 IDC，且跨国 IP 跳变本身触发异地保护）。
   真正合适的只有国内家宽/移动 IP（自家宽带反向隧道或家宽 NAT），且切换要一次性固定，不反复漂。
+
+## H 批（2026-11-21 上午）— 接口上线后的两次事故与结论
+
+### 事故 1：05:15 被踢，监控没告警
+- 现象：`KICKED OFFLINE {"tipsDesc":"你的账号当前登录已失效，请重新登录。"}`，账号挂了 3 小时无人知。
+- 根因（监控侧）：`watchdog.sh` 用 `flock` 拿锁后，`su qqrun -c "... &"` 启动的 QQ 进程继承了 fd 9（锁文件），
+  锁永不释放，之后每次 cron 调用都在 `flock -n 9 || exit 0` 静默退出。
+- 修复：重启命令加 `9>&-`，子进程不再继承锁。教训：任何 daemon 化的子进程都要显式关闭锁 fd。
+- 根因（账号侧）：前一天 8 次重启（上线接口 + token 轮换）累积登录频次，风控要求重新验证身份。
+- 恢复：08:34 扫码登录成功，08:35 新快照落盘（snap-20261121-083513.tgz）。
+
+### 事故 2：token 进了公开仓库
+- `onebot.json` 含真实 token，因不在 .gitignore 被 commit + push 到公开仓库，暴露约 6 分钟。
+- 处置：移出版本控制 → filter-repo 清历史 → 轮换 token → 删库重建（旧 SHA 才真正失效）。
+- 结论：GitHub 强推后旧提交仍能按 SHA 访问，**只有删库重建能彻底清除**；任何写进仓库的密钥都必须立即轮换。
+
+### 接口层落地（P0/P1 完成）
+- `src/onebot.js`：零依赖 HTTP + 手写 RFC6455 WebSocket，token 鉴权，事件推送（message/heartbeat/notice）。
+- `apiCalls`：38 个动作，覆盖收发、群管理、好友管理、文件发送、已读、探针。
+- 关键工具 `debug_probe`：运行时列出任意内核服务的方法名。之前靠 `strings wrapper.node` 猜名，
+  猜错三次（modifyGroupExtInfo / getGroupDetailInfo / setMsgRead 参数形态）；有了探针一次就准。
+- `message_id` 必须返回字符串：19 位 msgId 超过 JS 安全整数（2^53），用数字会改尾数，撤回会失败。
+
+### 群文件上传的真相（查 napcat-ref 源码）
+- NapCat 的 OneBot `upload_group_file` **不是上传到群文件空间**，只是拼 fileElement 发一条文件消息。
+  本项目对齐该语义：`upload_group_file` / `upload_private_file` 均走 `buildMediaElement("file")`。
+- 真正上传群空间要 `RichMediaService.onlyUploadFile` / `uploadRMFileWithoutMsg`，签名与上传回调无人验证，暂缓。
+
+### 现状
+- 38 个接口，文件消息私聊/群均已实测（inbox 有 fileElement 回执，客户端显示 14 天到期）。
+- 运行时开关：`config.json`（auto_download_image / rate_limit_per_min），`onebot.json` 存 token，两者均不入库。
